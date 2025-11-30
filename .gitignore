@@ -1,0 +1,12 @@
+# PlatformIO
+# This folder contains downloaded libraries, build artifacts, and firmware.
+.pio/
+
+# Visual Studio Code
+# This folder contains user-specific workspace settings.
+.vscode/
+
+# Other common compiled files
+*.o
+*.a
+*.so

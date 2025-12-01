@@ -412,8 +412,9 @@ const char* MAIN_HTML = R"raw(
 </head>
 <body>
     <div class="header">
-        <h1>%GREETING% I'm %DEVICENAME%!</h1>
-        <p>Your friendly companion is online and connected.</p>
+        <h1>Hello.. %GREETING%</h1>
+        <h2>I'm %DEVICENAME%!</h2>
+        <p style="margin-top: -15px;">Your friendly companion is online and connected.</p>
     </div>
     <div class="top-right-info">
         <p id="live-datetime" style="margin:0; font-weight: bold;"></p>
@@ -428,7 +429,7 @@ const char* MAIN_HTML = R"raw(
         <!-- PARAMETER CARD 1: Sensor Data -->
         <div class="card parameter-card">
             <h2>Environment State</h2>
-            <p><strong>Temperature:</strong> <span id="temp">...</span> °C</p>
+            <p><strong>Temperature:</strong> <span id="temp">%TEMP_C%</span> °C</p>
             <p><strong>Humidity:</strong> <span id="humidity">%HUMIDITY%</span> %</p>
             <p><strong>Pressure:</strong> <span id="pressure">%PRESSURE%</span> hPa</p>
         </div>
@@ -988,16 +989,16 @@ void handleRoot(AsyncWebServerRequest *request) {
   String html = MAIN_HTML;
 
   // Create dynamic greeting
-  String greeting = "Hello!";
+  String greeting = "";
   struct tm timeinfo;
   if(getLocalTime(&timeinfo)){
     int currentHour = timeinfo.tm_hour;
     if (currentHour >= 5 && currentHour < 12) {
-      greeting = "Good morning!";
+      greeting = "Good morning.";
     } else if (currentHour >= 12 && currentHour < 18) {
-      greeting = "Good afternoon!";
+      greeting = "Good afternoon.";
     } else {
-      greeting = "Good evening!";
+      greeting = "Good evening.";
     }
   }
 
@@ -1035,7 +1036,7 @@ void handleRoot(AsyncWebServerRequest *request) {
 void handleData(AsyncWebServerRequest *request) {
     // Read sensors just before sending the response
     // No need to call readSensors() here if the main loop does it periodically.    
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<384> doc;
 
     char timeStr[20];
     struct tm timeinfo;
@@ -1049,7 +1050,6 @@ void handleData(AsyncWebServerRequest *request) {
     doc["humidity"] = humidity;
     doc["pressure_hPa"] = pressure_hPa;
     doc["state"] = currentState;
-    // doc["lux"] = lux; // Uncomment when lux sensor is added
     doc["uptime"] = millis();
     doc["heap"] = ESP.getFreeHeap();
     doc["time"] = timeStr;

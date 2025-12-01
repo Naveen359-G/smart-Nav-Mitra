@@ -290,6 +290,13 @@ const char* MAIN_HTML = R"raw(
             --cold: #00BFFF; /* Deep Sky Blue */
             --warning: #FFA500; /* Orange */
         }
+        .top-right-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            color: #555;
+        }
         body {
             font-family: 'Inter', sans-serif;
             margin: 0;
@@ -404,8 +411,11 @@ const char* MAIN_HTML = R"raw(
 </head>
 <body>
     <div class="header">
-        <h1>Hello, I'm %DEVICENAME%!</h1>
+        <h1>%GREETING% I'm %DEVICENAME%!</h1>
         <p>Your friendly companion is online and connected.</p>
+    </div>
+    <div class="top-right-info">
+        <p id="live-datetime" style="margin:0; font-weight: bold;"></p>
     </div>
 
     <div id="mochi-display" class="mochi-display">
@@ -416,7 +426,7 @@ const char* MAIN_HTML = R"raw(
     <div class="info-grid">
         <!-- PARAMETER CARD 1: Sensor Data -->
         <div class="card parameter-card">
-            <h2>Environment State (BME280)</h2>
+            <h2>Environment State</h2>
             <p><strong>Temperature:</strong> <span id="temp">%TEMP_C%</span> °C</p>
             <p><strong>Humidity:</strong> <span id="humidity">%HUMIDITY%</span> %</p>
             <p><strong>Pressure:</strong> <span id="pressure">%PRESSURE%</span> hPa</p>
@@ -487,6 +497,7 @@ const char* MAIN_HTML = R"raw(
                     document.getElementById('uptime').innerText = formatUptime(data.uptime);
                     document.getElementById('heap').innerText = data.heap;
                     document.getElementById('currentTime').innerText = data.time;
+                    document.getElementById('live-datetime').innerText = data.time;
 
                     // Update Chart
                     updateChart(data.time, data.tempC, data.humidity);
@@ -973,8 +984,23 @@ void handleRoot(AsyncWebServerRequest *request) {
   
   String html = MAIN_HTML;
 
+  // Create dynamic greeting
+  String greeting = "Hello!";
+  struct tm timeinfo;
+  if(getLocalTime(&timeinfo)){
+    int currentHour = timeinfo.tm_hour;
+    if (currentHour >= 5 && currentHour < 12) {
+      greeting = "Good morning!";
+    } else if (currentHour >= 12 && currentHour < 18) {
+      greeting = "Good afternoon!";
+    } else {
+      greeting = "Good evening!";
+    }
+  }
+
   // Server-Side Placeholder Replacement for the first load
   html.replace("%DEVICENAME%", deviceName);
+  html.replace("%GREETING%", greeting);
   html.replace("%LOCAL_IP%", WiFi.localIP().toString());
   html.replace("%WIFI_SSID%", WiFi.SSID());
   html.replace("%RSSI%", String(WiFi.RSSI()));

@@ -17,7 +17,9 @@ The current firmware provides a rich set of features right out of the box:
 - **At-a-Glance Data:** The OLED screen displays key sensor readings around the border.
 
 #### **Web Interface & Control**
-- **Live Data Dashboard:** A modern, mobile-friendly web page showing all sensor and system data.
+- **Dynamic Live Dashboard:** A modern, mobile-friendly web page showing all sensor and system data.
+    - Features a dynamic greeting (Good morning/afternoon/evening).
+    - Displays the current date and time in real-time.
 - **Historical Charting:** A live-updating chart plots the history of temperature and humidity.
 - **Web-Based Settings:** A dedicated `/settings` page to configure all device options.
 - **Remote Reboot:** A reboot button on the dashboard for easy troubleshooting.
@@ -120,7 +122,7 @@ Once Smart-Nav-Mitra is powered on for the first time, follow these steps to con
 
 ## 🗺️ Navigating the Web Interface
 
--   **Dashboard (Home Page):** This is the main view where you can see all live data, system status, and the historical data chart.
+-   **Dashboard (Home Page):** This is the main view where you can see all live data, system status, and the historical data chart. It features a dynamic greeting and a live clock.
 -   **Settings Page (`/settings`):** Click the "Settings" button on the dashboard to access the configuration page. Here you can change:
     -   Temperature alert thresholds.
     -   Your local time zone.
@@ -150,7 +152,7 @@ This project is developed in phases to ensure stability.
 -   **Phase 1: AI/TinyML Integration** - 🧊 **ON HOLD**
     -   This phase, intended to add gesture recognition, is currently on hold due to build complexities with the AI libraries.
 
--   **Phase 2: Daily Life Features** - ✅ **COMPLETE**
+-   **Phase 2: Daily Life & UI Enhancements** - ✅ **COMPLETE**
     -   This phase enhanced the device with features for daily routines and user customization. Key features included:
         -   A configurable daily wake-up alarm.
         -   Scheduled "Quiet Hours" to automatically silence the buzzer.
@@ -158,6 +160,8 @@ This project is developed in phases to ensure stability.
         -   An adjustable OLED screen timeout to prevent burn-in.
         -   Time zone selection for accurate local time display.
         -   A web page for uploading new firmware (`.bin` files) directly from the browser.
+        -   A dynamic, time-based greeting on the web dashboard.
+        -   A live date and time display on the web dashboard.
 
 -   **Phase 3: Advanced Sensing** - 📝 **NEXT UP**
     -   The next planned phase is to integrate new hardware to give Smart-Nav-Mitra new senses. This includes:

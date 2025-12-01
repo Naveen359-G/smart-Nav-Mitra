@@ -478,6 +478,7 @@ const char* MAIN_HTML = R"raw(
 
     <script>
         let sensorChart;
+        let timeOffset = 0; // Time difference in ms between server and client
 
         // Mapping MochiState enum to Strings for display
         const stateMap = {
@@ -487,6 +488,23 @@ const char* MAIN_HTML = R"raw(
             3: 'TOUCHED',
             4: 'UPDATING (OTA)',
         };
+
+        // Function to update the live clock every second
+        function updateLiveClock() {
+            const liveTimeElement = document.getElementById('live-datetime');
+            if (liveTimeElement && timeOffset !== 0) {
+                const clientNow = new Date(Date.now() - timeOffset);
+                const year = clientNow.getFullYear();
+                const month = String(clientNow.getMonth() + 1).padStart(2, '0');
+                const day = String(clientNow.getDate()).padStart(2, '0');
+                const hours = String(clientNow.getHours()).padStart(2, '0');
+                const minutes = String(clientNow.getMinutes()).padStart(2, '0');
+                const seconds = String(clientNow.getSeconds()).padStart(2, '0');
+                liveTimeElement.innerText = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+            } else if (liveTimeElement) {
+                liveTimeElement.innerText = 'Syncing...';
+            }
+        }
 
         // Function to fetch dynamic data and update the cards
         function updateData() {
@@ -503,7 +521,13 @@ const char* MAIN_HTML = R"raw(
                     document.getElementById('uptime').innerText = formatUptime(data.uptime);
                     document.getElementById('heap').innerText = data.heap;
                     document.getElementById('currentTime').innerText = data.time;
-                    document.getElementById('live-datetime').innerText = data.time;
+
+                    // Calculate time offset on first valid time received
+                    if (timeOffset === 0 && data.server_time_ms > 0) {
+                        const serverTime = new Date(data.server_time_ms);
+                        const clientTime = new Date();
+                        timeOffset = clientTime.getTime() - serverTime.getTime();
+                    }
 
                     // Update Chart
                     updateChart(data.time, data.tempC, data.humidity);
@@ -645,6 +669,7 @@ const char* MAIN_HTML = R"raw(
 
         // Update data every 3 seconds
         setInterval(updateData, 3000);
+        setInterval(updateLiveClock, 1000);
     </script>
 </body>
 </html>
@@ -1037,13 +1062,16 @@ void handleRoot(AsyncWebServerRequest *request) {
 // API endpoint to return JSON for dynamic JS updates
 void handleData(AsyncWebServerRequest *request) {
     // Read sensors just before sending the response
-    // No need to call readSensors() here if the main loop does it periodically.    
-    StaticJsonDocument<384> doc;
+    // No need to call readSensors() here if the main loop does it periodically.
+    StaticJsonDocument<512> doc;
 
     char timeStr[20];
     struct tm timeinfo;
+    unsigned long serverTimeMs = 0;
+
     if(getLocalTime(&timeinfo)){
       strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+      serverTimeMs = (unsigned long)mktime(&timeinfo) * 1000;
     } else {
       strcpy(timeStr, "No Time Sync");
     }
@@ -1055,6 +1083,7 @@ void handleData(AsyncWebServerRequest *request) {
     doc["uptime"] = millis();
     doc["heap"] = ESP.getFreeHeap();
     doc["time"] = timeStr;
+    doc["server_time_ms"] = serverTimeMs;
 
     String jsonResponse;
     serializeJson(doc, jsonResponse);

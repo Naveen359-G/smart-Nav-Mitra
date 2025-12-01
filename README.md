@@ -34,7 +34,7 @@ The current firmware provides a rich set of features right out of the box:
 - **User-Friendly Setup:** A Captive Portal creates a "Smart-Nav-Mitra-Setup" Wi-Fi network for easy first-time configuration.
 - **Persistent Memory (NVS):** All your settings (Wi-Fi, device name, alerts, etc.) are saved and persist through reboots.
 - **mDNS Discovery:** Access Mochi on your local network with a friendly URL like `http://mochi.local`.
-- **Over-the-Air (OTA) Updates:** Update the firmware wirelessly over your Wi-Fi network.
+- **Web-Based OTA Updates:** Update the firmware by uploading a `.bin` file directly from the web interface.
 
 ---
 
@@ -129,6 +129,7 @@ Once Smart-Nav-Mitra is powered on for the first time, follow these steps to con
     -   Alarm time and enable/disable the alarm.
     -   Enable or disable the buzzer.
 -   **Reboot Button:** Safely restarts the device from the web interface.
+-   **Firmware Update Page (`/update`):** Access this page from the settings page to upload a new `firmware.bin` file directly from your browser.
 
 ---
 
@@ -156,6 +157,7 @@ This project is developed in phases to ensure stability.
         -   A master toggle to enable/disable the buzzer.
         -   An adjustable OLED screen timeout to prevent burn-in.
         -   Time zone selection for accurate local time display.
+        -   A web page for uploading new firmware (`.bin` files) directly from the browser.
 
 -   **Phase 3: Advanced Sensing** - 📝 **NEXT UP**
     -   The next planned phase is to integrate new hardware to give Smart-Nav-Mitra new senses. This includes:

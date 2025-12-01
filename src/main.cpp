@@ -97,6 +97,7 @@ MochiState currentState = HAPPY;
 MochiState lastState = HAPPY; // To track state changes for display updates
 
 unsigned long lastSensorReadTime = 0;
+unsigned long lastMinuteCheck = 0; // For checking the alarm once per minute
 const long sensorInterval = 5000; // Read sensors every 5 seconds
 unsigned long touchTimer = 0;
 const long touchDisplayDuration = 2000; // Show TOUCHED state for 2 seconds
@@ -427,7 +428,7 @@ const char* MAIN_HTML = R"raw(
         <!-- PARAMETER CARD 1: Sensor Data -->
         <div class="card parameter-card">
             <h2>Environment State</h2>
-            <p><strong>Temperature:</strong> <span id="temp">%TEMP_C%</span> °C</p>
+            <p><strong>Temperature:</strong> <span id="temp">...</span> °C</p>
             <p><strong>Humidity:</strong> <span id="humidity">%HUMIDITY%</span> %</p>
             <p><strong>Pressure:</strong> <span id="pressure">%PRESSURE%</span> hPa</p>
         </div>
@@ -491,6 +492,7 @@ const char* MAIN_HTML = R"raw(
                     document.getElementById('temp').innerText = data.tempC.toFixed(1);
                     document.getElementById('humidity').innerText = data.humidity.toFixed(0);
                     document.getElementById('pressure').innerText = data.pressure_hPa.toFixed(0);
+                    // document.getElementById('lux').innerText = data.lux.toFixed(1); // Uncomment when lux sensor is added
 
                     // Update System Data
                     document.getElementById('current-state').innerText = stateMap[data.state];
@@ -737,12 +739,13 @@ const char* SETTINGS_HTML = R"raw(
                 <label for="buzzer">Enable Buzzer</label>
             </div>
 
+            <div class="checkbox-group" style="margin-top: 10px;">
+                <input type="checkbox" id="alarm_en" name="alarm_en" %ALARM_CHECKED%>
+                <label for="alarm_en">Enable Wake-up Alarm</label>
+            </div>
+
             <button type="submit">Save & Reboot</button>
         </form>
-        <div class="checkbox-group" style="margin-top: 10px;">
-            <input type="checkbox" id="alarm_en" name="alarm_en" %ALARM_CHECKED%>
-            <label for="alarm_en">Enable Wake-up Alarm</label>
-        </div>
 
         <a href="/update" style="display: block; text-align: center; margin-top: 20px;">Update Firmware</a>
 
@@ -1006,6 +1009,7 @@ void handleRoot(AsyncWebServerRequest *request) {
   html.replace("%RSSI%", String(WiFi.RSSI()));
   html.replace("%MAC_ADDRESS%", WiFi.macAddress());
   html.replace("%FREE_HEAP%", String(ESP.getFreeHeap()));
+  // html.replace("%LUX%", String(lux, 1)); // Uncomment when lux sensor is added
   
   // Replace sensor/state data
   html.replace("%TEMP_C%", String(tempC, 1));
@@ -1031,7 +1035,7 @@ void handleRoot(AsyncWebServerRequest *request) {
 void handleData(AsyncWebServerRequest *request) {
     // Read sensors just before sending the response
     // No need to call readSensors() here if the main loop does it periodically.    
-    StaticJsonDocument<384> doc;
+    StaticJsonDocument<512> doc;
 
     char timeStr[20];
     struct tm timeinfo;
@@ -1045,6 +1049,7 @@ void handleData(AsyncWebServerRequest *request) {
     doc["humidity"] = humidity;
     doc["pressure_hPa"] = pressure_hPa;
     doc["state"] = currentState;
+    // doc["lux"] = lux; // Uncomment when lux sensor is added
     doc["uptime"] = millis();
     doc["heap"] = ESP.getFreeHeap();
     doc["time"] = timeStr;
@@ -1320,7 +1325,7 @@ void checkAlarm() {
     }
   }
 
-  // Reset the alarm trigger flag after midnight
+  // Reset the alarm trigger flag just after midnight
   if (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 && alarmHasTriggeredToday) {
     alarmHasTriggeredToday = false;
   }
@@ -1478,12 +1483,19 @@ void loop() {
 
   // If there's any touch activity, reset the screen timeout timer
   if (digitalRead(TOUCH_PIN) == HIGH) {
-    lastActivityTime = millis();
-    if (isDisplayOff) isDisplayOff = false; // Wake up screen
+    if (isDisplayOff) {
+      isDisplayOff = false; // Wake up screen
+      // Force a redraw on wake-up
+      lastState = (MochiState)-1; // An invalid state to force redraw
+    }
+    lastActivityTime = millis(); // Reset activity timer
   }
 
-  // Check for alarm trigger
-  checkAlarm();
+  // Check for alarm trigger (once per minute)
+  if (millis() - lastMinuteCheck > 60000) {
+    lastMinuteCheck = millis();
+    checkAlarm();
+  }
 
   // Periodically check sensors and environment state
   if (millis() - lastSensorReadTime >= sensorInterval) {
@@ -1504,7 +1516,12 @@ void loop() {
   }
 
   // OLED Timeout Logic
-  if ((oledTimeoutMins > 0 && !isDisplayOff) || (isQuietHours() && !isDisplayOff)) {
+  // Check if the screen should be off due to timeout or quiet hours
+  bool shouldBeOff = (oledTimeoutMins > 0 && (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000)) || isQuietHours();
+  // But, give it a grace period after a touch
+  if (millis() - lastActivityTime < 10000) shouldBeOff = false; // Keep screen on for at least 10s after touch
+
+  if (shouldBeOff && !isDisplayOff) {
     if (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000) {
       isDisplayOff = true;
       display.clearDisplay();

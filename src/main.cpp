@@ -134,6 +134,9 @@ void handleSettings(AsyncWebServerRequest *request);
 void handleSaveSettings(AsyncWebServerRequest *request);
 void handleReboot(AsyncWebServerRequest *request);
 void drawMochiFace(MochiState state);
+void handleUpdate(AsyncWebServerRequest *request);
+void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+void handleUpdateSuccess(AsyncWebServerRequest *request);
 bool isQuietHours();
 void checkAlarm();
 void readSensors();
@@ -730,8 +733,92 @@ const char* SETTINGS_HTML = R"raw(
             <label for="alarm_en">Enable Wake-up Alarm</label>
         </div>
 
+        <a href="/update" style="display: block; text-align: center; margin-top: 20px;">Update Firmware</a>
+
         <p class="note">Smart-Nav-Mitra will reboot to apply the new settings.</p>
     </div>
+</body>
+</html>
+)raw";
+
+// ------------------------------------
+// 4. EMBEDDED HTML FOR FIRMWARE UPDATE PAGE
+// ------------------------------------
+const char* UPDATE_HTML = R"raw(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firmware Update</title>
+    <style>
+        :root { --primary: #6A5ACD; --bg: #F0F4F8; --card-bg: #FFFFFF; --text-color: #333; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: var(--bg); color: var(--text-color); display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .container { background: var(--card-bg); padding: 30px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1); width: 100%; max-width: 500px; text-align: center; }
+        h1 { color: var(--primary); }
+        form { margin-top: 20px; }
+        input[type="file"] { border: 2px dashed #ddd; padding: 20px; border-radius: 8px; width: 100%; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; margin-top: 20px; background-color: var(--primary); color: white; border: none; border-radius: 8px; font-size: 1.1em; cursor: pointer; }
+        button:hover { background-color: #5949B2; }
+        .progress-bar { width: 100%; background-color: #ddd; border-radius: 4px; margin-top: 20px; display: none; }
+        .progress { width: 0%; height: 20px; background-color: var(--primary); border-radius: 4px; text-align: center; color: white; line-height: 20px; }
+        #status { margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Firmware Update</h1>
+        <p>Select a .bin file to upload and update the device.</p>
+        <form id="upload_form" method="POST" action="/update" enctype="multipart/form-data">
+            <input type="file" name="update" id="file" accept=".bin" required>
+            <button type="submit">Update Firmware</button>
+        </form>
+        <div class="progress-bar" id="progress_bar">
+            <div class="progress" id="progress">0%</div>
+        </div>
+        <div id="status"></div>
+    </div>
+    <script>
+        const form = document.getElementById('upload_form');
+        const progressBar = document.getElementById('progress_bar');
+        const progress = document.getElementById('progress');
+        const status = document.getElementById('status');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('file');
+            const file = fileInput.files[0];
+            if (!file) {
+                status.textContent = 'Please select a file.';
+                return;
+            }
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/update', true);
+
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    const percentComplete = (e.loaded / e.total) * 100;
+                    progressBar.style.display = 'block';
+                    progress.style.width = percentComplete.toFixed(2) + '%';
+                    progress.textContent = percentComplete.toFixed(2) + '%';
+                }
+            });
+
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    status.textContent = 'Update successful! Rebooting...';
+                    setTimeout(() => window.location.href = '/', 5000); // Redirect to home page after 5s
+                } else {
+                    status.textContent = 'Update failed! ' + xhr.responseText;
+                }
+            };
+
+            const formData = new FormData();
+            formData.append('update', file);
+            xhr.send(formData);
+        });
+    </script>
 </body>
 </html>
 )raw";
@@ -1030,6 +1117,49 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     ESP.restart();
   } else {
     request->send(400, "text/plain", "Bad Request: Missing parameters.");
+  }
+}
+
+// --- WEB-BASED FIRMWARE UPDATE HANDLERS ---
+
+// Handler to serve the /update page
+void handleUpdate(AsyncWebServerRequest *request) {
+  request->send(200, "text/html", UPDATE_HTML);
+}
+
+// Handler for the file upload process
+void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+  if (index == 0) {
+    Serial.printf("Update Start: %s\n", filename.c_str());
+    currentState = UPDATING; // Show updating state on OLED
+    // If authentication is not used, it's important to check the filename extension
+    if (!filename.endsWith(".bin")) {
+      request->send(400, "text/plain", "Not a .bin file");
+      return;
+    }
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // Start OTA update
+      Update.printError(Serial);
+    }
+  }
+  if (len) {
+    Update.write(data, len); // Write the received chunk to flash
+  }
+  if (final) {
+    if (Update.end(true)) { // Finish the update
+      Serial.println("Update Success");
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+// Handler for when the update is successfully finished
+void handleUpdateSuccess(AsyncWebServerRequest *request) {
+  if(Update.isFinished()){
+    request->send(200, "text/plain", "OK");
+    ESP.restart();
+  } else {
+    request->send(500, "text/plain", "Update failed");
   }
 }
 

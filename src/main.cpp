@@ -35,6 +35,7 @@ const char* KEY_TEMP_HIGH = "temp_high";
 const char* KEY_TEMP_LOW = "temp_low";
 const char* KEY_BUZZER_EN = "buzzer_en";
 const char* KEY_TZ_OFFSET = "tz_offset";
+const char* KEY_SENSOR_INT = "sensor_int";
 const char* KEY_OLED_TO = "oled_to";
 const char* KEY_QUIET_START = "quiet_start";
 const char* KEY_QUIET_END = "quiet_end";
@@ -63,6 +64,7 @@ float tempAlertLow = 18.0;  // Celsius
 // --- CUSTOMIZABLE SETTINGS (with defaults) ---
 bool buzzerEnabled = true;
 uint16_t oledTimeoutMins = 10; // 0 = always on
+unsigned long sensorInterval = 5000; // Read sensors every 5 seconds (default, in ms)
 long gmtOffset_sec = 0;
 uint8_t quietHourStart = 22; // 10 PM
 uint8_t quietHourEnd = 7;    // 7 AM
@@ -98,7 +100,6 @@ MochiState lastState = HAPPY; // To track state changes for display updates
 
 unsigned long lastSensorReadTime = 0;
 unsigned long lastMinuteCheck = 0; // For checking the alarm once per minute
-const long sensorInterval = 5000; // Read sensors every 5 seconds
 unsigned long touchTimer = 0;
 const long touchDisplayDuration = 2000; // Show TOUCHED state for 2 seconds
 unsigned long lastActivityTime = 0;
@@ -122,7 +123,7 @@ int historyIndex = 0;
 // --- FUNCTION PROTOTYPES ---
 void loadConfig();
 void saveConfig(const String& ssid, const String& pass, const String& name);
-void saveSettings(float high, float low, bool buzzer, long tz, uint16_t timeout, uint8_t qStart, uint8_t qEnd, bool almEn, uint8_t almHr, uint8_t almMin);
+void saveSettings(float high, float low, bool buzzer, long tz, uint16_t sensInt, uint16_t timeout, uint8_t qStart, uint8_t qEnd, bool almEn, uint8_t almHr, uint8_t almMin);
 void setupOTA();
 bool connectToWiFi();
 void startCaptivePortal();
@@ -443,8 +444,7 @@ const char* MAIN_HTML = R"raw(
             <h2>System Health</h2>
             <p><strong>Current State:</strong> <span id="current-state">%STATE%</span></p>
             <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
-            <p><strong>Free Heap:</strong> <span id="heap">%FREE_HEAP%</span> bytes</p>
-            <p><strong>Current Time:</strong> <span id="currentTime">Loading...</span></p>
+            <p><strong>Free Heap:</strong> <span id="heap">%FREE_HEAP%</span></p>
             <div class="actions">
                 <button class="action-btn btn-settings" onclick="window.location.href='/settings'">Settings</button>
                 <button class="action-btn btn-reboot" onclick="rebootDevice()">Reboot</button>
@@ -474,11 +474,10 @@ const char* MAIN_HTML = R"raw(
     <div class="card" style="width: 100%; max-width: 1000px; margin-top: 20px;">
         <h2>Live Environment Data</h2>
         <canvas id="sensorChart"></canvas>
-    </div>
+        </div>
 
     <script>
         let sensorChart;
-        let timeOffset = 0; // Time difference in ms between server and client
 
         // Mapping MochiState enum to Strings for display
         const stateMap = {
@@ -489,21 +488,38 @@ const char* MAIN_HTML = R"raw(
             4: 'UPDATING (OTA)',
         };
 
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+        function getDayWithOrdinal(d) {
+            if (d > 3 && d < 21) return d + 'th';
+            switch (d % 10) {
+                case 1: return d + "st";
+                case 2: return d + "nd";
+                case 3: return d + "rd";
+                default: return d + "th";
+            }
+        }
+
         // Function to update the live clock every second
         function updateLiveClock() {
+            const now = new Date();
+
+            // Time part
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const timeString = `${hours}:${minutes}:${seconds}`;
+
+            // Date part
+            const dayOfWeek = dayNames[now.getDay()];
+            const dayOfMonth = getDayWithOrdinal(now.getDate());
+            const month = monthNames[now.getMonth()];
+            const year = now.getFullYear();
+            const dateString = `${dayOfWeek}, ${dayOfMonth} ${month} ${year}`;
+
             const liveTimeElement = document.getElementById('live-datetime');
-            if (liveTimeElement && timeOffset !== 0) {
-                const clientNow = new Date(Date.now() - timeOffset);
-                const year = clientNow.getFullYear();
-                const month = String(clientNow.getMonth() + 1).padStart(2, '0');
-                const day = String(clientNow.getDate()).padStart(2, '0');
-                const hours = String(clientNow.getHours()).padStart(2, '0');
-                const minutes = String(clientNow.getMinutes()).padStart(2, '0');
-                const seconds = String(clientNow.getSeconds()).padStart(2, '0');
-                liveTimeElement.innerText = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-            } else if (liveTimeElement) {
-                liveTimeElement.innerText = 'Syncing...';
-            }
+            if (liveTimeElement) liveTimeElement.innerHTML = `${dateString}<br>${timeString}`;
         }
 
         // Function to fetch dynamic data and update the cards
@@ -519,18 +535,10 @@ const char* MAIN_HTML = R"raw(
                     // Update System Data
                     document.getElementById('current-state').innerText = stateMap[data.state];
                     document.getElementById('uptime').innerText = formatUptime(data.uptime);
-                    document.getElementById('heap').innerText = data.heap;
-                    document.getElementById('currentTime').innerText = data.time;
-
-                    // Calculate time offset on first valid time received
-                    if (timeOffset === 0 && data.server_time_ms > 0) {
-                        const serverTime = new Date(data.server_time_ms);
-                        const clientTime = new Date();
-                        timeOffset = clientTime.getTime() - serverTime.getTime();
-                    }
+                    document.getElementById('heap').innerText = data.heap_percent.toFixed(1) + ' %';
 
                     // Update Chart
-                    updateChart(data.time, data.tempC, data.humidity);
+                    updateChart(data.tempC, data.humidity);
 
                     // Update Mochi Face and Display Color
                     updateMochiFace(data.state, data.tempC);
@@ -647,9 +655,11 @@ const char* MAIN_HTML = R"raw(
             });
         }
 
-        function updateChart(label, temp, hum) {
+        function updateChart(temp, hum) {
             if (!sensorChart) return;
-            sensorChart.data.labels.push(label.split(' ')[1]); // Just time
+            const now = new Date();
+            const timeString = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
+            sensorChart.data.labels.push(timeString);
             sensorChart.data.datasets[0].data.push(temp);
             sensorChart.data.datasets[1].data.push(hum);
 
@@ -668,7 +678,7 @@ const char* MAIN_HTML = R"raw(
             .catch(error => console.error('Error fetching history:', error));
 
         // Update data every 3 seconds
-        setInterval(updateData, 3000);
+        setInterval(updateData, %SENSOR_INTERVAL_MS%);
         updateLiveClock(); // Call it once immediately on load
         setInterval(updateLiveClock, 1000);
     </script>
@@ -748,6 +758,9 @@ const char* SETTINGS_HTML = R"raw(
                 <option value="39600">UTC+11:00</option>
                 <option value="43200">UTC+12:00</option>
             </select>
+
+            <label for="sensor_interval">Sensor Read Interval (seconds, min 5)</label>
+            <input type="number" id="sensor_interval" name="sensor_interval" min="5" value="%SENSOR_INTERVAL%">
 
             <label for="oled_timeout">OLED Timeout (minutes, 0=always on)</label>
             <input type="number" id="oled_timeout" name="oled_timeout" min="0" value="%OLED_TO%">
@@ -885,6 +898,7 @@ void loadConfig() {
   // Load new settings
   buzzerEnabled = preferences.getBool(KEY_BUZZER_EN, true);
   gmtOffset_sec = preferences.getLong(KEY_TZ_OFFSET, 0);
+  sensorInterval = preferences.getUShort(KEY_SENSOR_INT, 5) * 1000; // Get seconds, convert to ms
   oledTimeoutMins = preferences.getUShort(KEY_OLED_TO, 10);
   // Load quiet hours and alarm settings
   quietHourStart = preferences.getUChar(KEY_QUIET_START, 22);
@@ -911,12 +925,13 @@ void saveConfig(const String& ssid, const String& pass, const String& name) {
 }
 
 // Save new settings to NVS
-void saveSettings(float high, float low, bool buzzer, long tz, uint16_t timeout, uint8_t qStart, uint8_t qEnd, bool almEn, uint8_t almHr, uint8_t almMin) {
+void saveSettings(float high, float low, bool buzzer, long tz, uint16_t sensInt, uint16_t timeout, uint8_t qStart, uint8_t qEnd, bool almEn, uint8_t almHr, uint8_t almMin) {
   preferences.begin(PREFS_NAMESPACE, false); // Read/Write
   preferences.putFloat(KEY_TEMP_HIGH, high);
   preferences.putFloat(KEY_TEMP_LOW, low);
   preferences.putBool(KEY_BUZZER_EN, buzzer);
   preferences.putLong(KEY_TZ_OFFSET, tz);
+  preferences.putUShort(KEY_SENSOR_INT, sensInt);
   preferences.putUShort(KEY_OLED_TO, timeout);
   preferences.putUChar(KEY_QUIET_START, qStart);
   preferences.putUChar(KEY_QUIET_END, qEnd);
@@ -1034,11 +1049,13 @@ void handleRoot(AsyncWebServerRequest *request) {
   // Server-Side Placeholder Replacement for the first load
   html.replace("%DEVICENAME%", deviceName);
   html.replace("%GREETING%", greeting);
-  html.replace("%LOCAL_IP%", WiFi.localIP().toString());
+  html.replace("%LOCAL_IP%", WiFi.localIP().toString()); 
   html.replace("%WIFI_SSID%", WiFi.SSID());
   html.replace("%RSSI%", String(WiFi.RSSI()));
-  html.replace("%MAC_ADDRESS%", WiFi.macAddress());
-  html.replace("%FREE_HEAP%", String(ESP.getFreeHeap()));
+  html.replace("%MAC_ADDRESS%", WiFi.macAddress());  
+  float heapPercent = ((float)ESP.getFreeHeap() / (float)ESP.getHeapSize()) * 100.0;
+  html.replace("%FREE_HEAP%", String(heapPercent, 1) + " %");
+  html.replace("%SENSOR_INTERVAL_MS%", String(sensorInterval));
   
   // Replace sensor/state data
   html.replace("%TEMP_C%", String(tempC, 1));
@@ -1064,32 +1081,24 @@ void handleRoot(AsyncWebServerRequest *request) {
 void handleData(AsyncWebServerRequest *request) {
     // Read sensors just before sending the response
     // No need to call readSensors() here if the main loop does it periodically.
-    StaticJsonDocument<512> doc;
-
-    char timeStr[20];
-    struct tm timeinfo;
-    unsigned long serverTimeMs = 0;
-
-    if(getLocalTime(&timeinfo)){
-      strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
-      serverTimeMs = (unsigned long)mktime(&timeinfo) * 1000;
-    } else {
-      strcpy(timeStr, "No Time Sync");
-    }
+    StaticJsonDocument<256> doc;
 
     doc["tempC"] = tempC;
     doc["humidity"] = humidity;
     doc["pressure_hPa"] = pressure_hPa;
     doc["state"] = currentState;
     doc["uptime"] = millis();
-    doc["heap"] = ESP.getFreeHeap();
-    doc["time"] = timeStr;
-    doc["server_time_ms"] = serverTimeMs;
+    
+    float heapPercent = ((float)ESP.getFreeHeap() / (float)ESP.getHeapSize()) * 100.0;
+    doc["heap_percent"] = heapPercent;
 
     String jsonResponse;
     serializeJson(doc, jsonResponse);
     request->send(200, "application/json", jsonResponse);
 }
+
+// Buffer for strftime in handleHistory to avoid stack allocation in loop
+char strftime_buf[64];
 
 // API endpoint to return historical data for chart
 void handleHistory(AsyncWebServerRequest *request) {
@@ -1097,10 +1106,15 @@ void handleHistory(AsyncWebServerRequest *request) {
     JsonArray labels = doc.createNestedArray("labels");
     JsonArray temps = doc.createNestedArray("temps");
     JsonArray hums = doc.createNestedArray("hums");
-
+    
     for (int i = 0; i < DATA_HISTORY_SIZE; i++) {
         if (dataHistory[i].time > 0) { // Only add valid points
-            labels.add(dataHistory[i].time);
+            // Convert the millis timestamp to a readable time string
+            unsigned long now_ms = millis();
+            unsigned long point_ms = dataHistory[i].time;
+            time_t point_time = time(nullptr) - ((now_ms - point_ms) / 1000);
+            strftime(strftime_buf, sizeof(strftime_buf), "%H:%M:%S", localtime(&point_time));
+            labels.add(strftime_buf);
             temps.add(dataHistory[i].temp);
             hums.add(dataHistory[i].humidity);
         }
@@ -1148,6 +1162,7 @@ void handleSettings(AsyncWebServerRequest *request) {
   html.replace("%TEMP_HIGH%", String(tempAlertHigh));
   html.replace("%TEMP_LOW%", String(tempAlertLow));
   html.replace("%BUZZER_CHECKED%", buzzerEnabled ? "checked" : "");
+  html.replace("%SENSOR_INTERVAL%", String(sensorInterval / 1000)); // Convert ms to s for display
   html.replace("%OLED_TO%", String(oledTimeoutMins));
   html.replace("%QUIET_START%", String(quietHourStart));
   html.replace("%QUIET_END%", String(quietHourEnd));
@@ -1162,20 +1177,21 @@ void handleSettings(AsyncWebServerRequest *request) {
 
 // Handler for saving settings
 void handleSaveSettings(AsyncWebServerRequest *request) {
-  if (request->hasParam("temp_high", true) && request->hasParam("temp_low", true) && request->hasParam("timezone", true) && request->hasParam("oled_timeout", true) &&
+  if (request->hasParam("temp_high", true) && request->hasParam("temp_low", true) && request->hasParam("timezone", true) && request->hasParam("sensor_interval", true) && request->hasParam("oled_timeout", true) &&
       request->hasParam("quiet_start", true) && request->hasParam("quiet_end", true) && request->hasParam("alarm_hr", true) && request->hasParam("alarm_min", true)) {
 
     float high = request->getParam("temp_high", true)->value().toFloat();
     float low = request->getParam("temp_low", true)->value().toFloat();
     bool buzzer = request->hasParam("buzzer", true);
     long tz = request->getParam("timezone", true)->value().toInt();
+    uint16_t sensInt = request->getParam("sensor_interval", true)->value().toInt();
     uint16_t timeout = request->getParam("oled_timeout", true)->value().toInt();
     uint8_t qStart = request->getParam("quiet_start", true)->value().toInt();
     uint8_t qEnd = request->getParam("quiet_end", true)->value().toInt();
     bool almEn = request->hasParam("alarm_en", true);
     uint8_t almHr = request->getParam("alarm_hr", true)->value().toInt();
     uint8_t almMin = request->getParam("alarm_min", true)->value().toInt();
-    saveSettings(high, low, buzzer, tz, timeout, qStart, qEnd, almEn, almHr, almMin);
+    saveSettings(high, low, buzzer, tz, sensInt, timeout, qStart, qEnd, almEn, almHr, almMin);
 
     request->send(200, "text/html", "<h1>Settings Saved!</h1><p>Smart-Nav-Mitra is rebooting to apply changes.</p>");
     delay(2000);
@@ -1480,7 +1496,20 @@ void setup() {
   }
   
   // 3. Configure Time
+  Serial.print("Configuring time from NTP server...");
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  int retries = 0;
+  while (!getLocalTime(&timeinfo) && retries < 15) {
+    Serial.print(".");
+    delay(1000);
+    retries++;
+  }
+  if (retries < 15) {
+    Serial.println("\nTime synchronized successfully!");
+  } else {
+    Serial.println("\nFailed to synchronize time. Proceeding without it.");
+  }
 
   // Read sensors initially
   readSensors();

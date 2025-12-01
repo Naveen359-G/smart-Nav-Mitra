@@ -159,7 +159,6 @@ This project is developed in phases to ensure stability.
         -   A master toggle to enable/disable the buzzer.
         -   An adjustable OLED screen timeout to prevent burn-in.
         -   Time zone selection for accurate local time display.
-        -   A web page for uploading new firmware (`.bin` files) directly from the browser.
         -   A dynamic, time-based greeting on the web dashboard.
         -   A live date and time display on the web dashboard.
 

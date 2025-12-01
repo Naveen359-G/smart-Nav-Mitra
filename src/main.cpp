@@ -318,6 +318,10 @@ const char* MAIN_HTML = R"raw(
             font-size: 2.5em;
             margin-bottom: 5px;
         }
+        h2.device-name {
+            font-family: Verdana, sans-serif;
+            color: black;
+        }
         .mochi-display {
             display: flex;
             flex-direction: column;
@@ -413,8 +417,8 @@ const char* MAIN_HTML = R"raw(
 <body>
     <div class="header">
         <h1>Hello.. %GREETING%</h1>
-        <h2>I'm %DEVICENAME%!</h2>
-        <p style="margin-top: -15px;">Your friendly companion is online and connected.</p>
+        <h2 class="device-name">I'm %DEVICENAME%!</h2>
+        <p>Your friendly companion is online and connected.</p>
     </div>
     <div class="top-right-info">
         <p id="live-datetime" style="margin:0; font-weight: bold;"></p>
@@ -429,7 +433,7 @@ const char* MAIN_HTML = R"raw(
         <!-- PARAMETER CARD 1: Sensor Data -->
         <div class="card parameter-card">
             <h2>Environment State</h2>
-            <p><strong>Temperature:</strong> <span id="temp">%TEMP_C%</span> °C</p>
+            <p><strong>Temperature:</strong> <span id="temp">--.-</span> °C</p>
             <p><strong>Humidity:</strong> <span id="humidity">%HUMIDITY%</span> %</p>
             <p><strong>Pressure:</strong> <span id="pressure">%PRESSURE%</span> hPa</p>
         </div>
@@ -493,7 +497,6 @@ const char* MAIN_HTML = R"raw(
                     document.getElementById('temp').innerText = data.tempC.toFixed(1);
                     document.getElementById('humidity').innerText = data.humidity.toFixed(0);
                     document.getElementById('pressure').innerText = data.pressure_hPa.toFixed(0);
-                    // document.getElementById('lux').innerText = data.lux.toFixed(1); // Uncomment when lux sensor is added
 
                     // Update System Data
                     document.getElementById('current-state').innerText = stateMap[data.state];
@@ -1010,7 +1013,6 @@ void handleRoot(AsyncWebServerRequest *request) {
   html.replace("%RSSI%", String(WiFi.RSSI()));
   html.replace("%MAC_ADDRESS%", WiFi.macAddress());
   html.replace("%FREE_HEAP%", String(ESP.getFreeHeap()));
-  // html.replace("%LUX%", String(lux, 1)); // Uncomment when lux sensor is added
   
   // Replace sensor/state data
   html.replace("%TEMP_C%", String(tempC, 1));
@@ -1516,12 +1518,14 @@ void loop() {
   }
 
   // OLED Timeout Logic
-  // Check if the screen should be off due to timeout or quiet hours
-  bool shouldBeOff = (oledTimeoutMins > 0 && (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000)) || isQuietHours();
-  // But, give it a grace period after a touch
-  if (millis() - lastActivityTime < 10000) shouldBeOff = false; // Keep screen on for at least 10s after touch
-
-  if (shouldBeOff && !isDisplayOff) {
+  if (isQuietHours()) {
+    if (!isDisplayOff) {
+      isDisplayOff = true;
+      display.clearDisplay();
+      display.display();
+    }
+  } else if (oledTimeoutMins > 0 && !isDisplayOff) {
+    // Handle regular timeout only if not in quiet hours
     if (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000) {
       isDisplayOff = true;
       display.clearDisplay();

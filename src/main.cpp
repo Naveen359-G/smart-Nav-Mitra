@@ -953,6 +953,8 @@ bool connectToWiFi() {
     server.on("/settings", HTTP_GET, handleSettings);
     server.on("/save-settings", HTTP_POST, handleSaveSettings);
     server.on("/reboot", HTTP_POST, handleReboot);
+    server.on("/update", HTTP_GET, handleUpdate);
+    server.on("/update", HTTP_POST, handleUpdateSuccess, handleUpdateUpload);
     server.begin();
     
     // Resume HAPPY state after connection

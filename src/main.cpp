@@ -669,6 +669,7 @@ const char* MAIN_HTML = R"raw(
 
         // Update data every 3 seconds
         setInterval(updateData, 3000);
+        updateLiveClock(); // Call it once immediately on load
         setInterval(updateLiveClock, 1000);
     </script>
 </body>

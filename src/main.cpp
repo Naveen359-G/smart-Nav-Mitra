@@ -21,7 +21,7 @@
 #define ENABLE_VOICE_RECOGNITION 0
 
 // --- WIFI & NVS CONFIGURATION ---
-const char* AP_SSID = "Smart-Nav-Mitra-Setup";
+const char* AP_SSID = "Smart-Mitra-Setup";
 const char* AP_PASS = "mochisetup";
 const IPAddress AP_IP(192, 168, 4, 1);
 const IPAddress NET_MASK(255, 255, 255, 0);
@@ -67,7 +67,7 @@ uint16_t oledTimeoutMins = 10; // 0 = always on
 unsigned long sensorInterval = 5000; // Read sensors every 5 seconds (default, in ms)
 long gmtOffset_sec = 0;
 uint8_t quietHourStart = 22; // 10 PM
-uint8_t quietHourEnd = 7;    // 7 AM
+uint8_t quietHourEnd = 5;    // 5 AM
 bool alarmEnabled = false;
 uint8_t alarmHour = 7;
 uint8_t alarmMinute = 30;
@@ -94,8 +94,8 @@ const int   daylightOffset_sec = 3600;
 #endif
 
 // --- STATE MANAGEMENT ---
-enum MochiState { HAPPY, ALERT_HIGH, ALERT_LOW, TOUCHED, UPDATING };
-MochiState currentState = HAPPY;
+enum MochiState { HAPPY, ALERT_HIGH, ALERT_LOW, TOUCHED, UPDATING, SETUP };
+MochiState currentState = SETUP; // Start in SETUP state initially
 MochiState lastState = HAPPY; // To track state changes for display updates
 
 unsigned long lastSensorReadTime = 0;
@@ -104,6 +104,18 @@ unsigned long touchTimer = 0;
 const long touchDisplayDuration = 2000; // Show TOUCHED state for 2 seconds
 unsigned long lastActivityTime = 0;
 bool isDisplayOff = false;
+
+// --- NEW: Big Eyes Animation & Periodic Display ---
+enum EyeDirection { EYES_CENTER, EYES_UP, EYES_DOWN, EYES_LEFT, EYES_RIGHT };
+EyeDirection currentEyeDirection = EYES_CENTER;
+unsigned long lastEyeMoveTime = 0;
+unsigned long lastParamShowTime = 0;
+unsigned long paramScreenStartTime = 0;
+bool isShowingParameters = false;
+const long EYE_MOVE_INTERVAL = 2000; // Move eyes every 2 seconds
+const long PARAM_SHOW_INTERVAL = 10000; // Show parameters every 10 seconds
+const long PARAM_DISPLAY_DURATION = 10000; // For 10 seconds
+
 
 // Sensor Readings (Global for easy access)
 float tempC = 0.0;
@@ -137,6 +149,7 @@ void handleSaveSettings(AsyncWebServerRequest *request);
 void handleReboot(AsyncWebServerRequest *request);
 void drawMochiFace(MochiState state);
 void handleUpdate(AsyncWebServerRequest *request);
+void drawMochiBigEyes(EyeDirection direction);
 void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
 void handleUpdateSuccess(AsyncWebServerRequest *request);
 bool isQuietHours();
@@ -967,8 +980,8 @@ void startCaptivePortal() {
   server.begin();
   Serial.println("HTTP and DNS Server started.");
   
-  // Show UPDATING state on OLED during configuration (as it's busy)
-  currentState = UPDATING; 
+  // Show SETUP state on OLED during configuration
+  currentState = SETUP; 
   drawMochiFace(currentState);
 }
 
@@ -976,13 +989,6 @@ void startCaptivePortal() {
 bool connectToWiFi() {
   Serial.printf("Connecting to Wi-Fi: %s\n", staSsid.c_str());
   
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.print("Connecting to:");
-  display.setCursor(0, 10);
-  display.println(staSsid.c_str());
-  display.display();
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(staSsid.c_str(), staPass.c_str());
 
@@ -1286,10 +1292,11 @@ void readSensors() {
     humidity = humidity_event.relative_humidity;
   } else {
     Serial.println("Failed to read from AHT20");
+    tempC = 0.0; humidity = 0.0; // Prevent using stale data on failure
   }
 
   // Use the BMP280 for Pressure
-  pressure_hPa = bmp.readPressure() / 100.0F;
+  pressure_hPa = bmp.readPressure() / 100.0F; // This line was missing/commented out
 
   Serial.printf("T: %.2f C, H: %.2f %%, P: %.2f hPa\n", tempC, humidity, pressure_hPa);
 }
@@ -1309,6 +1316,12 @@ void checkTouchAndEnvironment() {
   // The main loop now ensures this is only called when not in a temporary state.
   // It also ensures sensors are read just before this check.
   
+  // Add a "warm-up" period. Don't check for environmental alerts for the first 5 seconds
+  // to allow sensors to stabilize and prevent false alerts on boot.
+  if (millis() < 5000) {
+    currentState = HAPPY;
+    return;
+  }
     // High Temperature Alert
     if (tempC > tempAlertHigh) {
       if (currentState != ALERT_HIGH) { // Only change state and print once
@@ -1388,63 +1401,114 @@ void drawMochiFace(MochiState state) {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  // Draw the main Mochi shape
-  display.fillCircle(64, 32, 30, SSD1306_WHITE);
-  display.fillCircle(64, 32, 28, SSD1306_BLACK);
+  // Draw the main Mochi shape, aligned to the right
+  display.fillCircle(96, 32, 30, SSD1306_WHITE);
+  display.fillCircle(96, 32, 28, SSD1306_BLACK);
 
   switch (state) {
     case HAPPY:
       // Happy Eyes and Smile
-      display.fillCircle(50, 25, 3, SSD1306_WHITE);
-      display.fillCircle(78, 25, 3, SSD1306_WHITE);
-      display.drawCircle(64, 32, 15, SSD1306_WHITE);
-      display.fillRect(49, 32, 30, 15, SSD1306_BLACK); 
+      display.fillCircle(82, 25, 3, SSD1306_WHITE);
+      display.fillCircle(110, 25, 3, SSD1306_WHITE);
+      display.drawCircle(96, 32, 15, SSD1306_WHITE);
+      display.fillRect(81, 32, 30, 15, SSD1306_BLACK); 
       break;
 
     case ALERT_HIGH:
       // Hot Alert (Sweaty/Panting look)
-      display.drawLine(45, 20, 55, 30, SSD1306_WHITE); // Angled eyes
-      display.drawLine(55, 20, 45, 30, SSD1306_WHITE);
-      display.drawLine(73, 20, 83, 30, SSD1306_WHITE);
-      display.drawLine(83, 20, 73, 30, SSD1306_WHITE);
-      display.fillRect(62, 38, 4, 4, SSD1306_WHITE); // Open Mouth (Square)
+      display.drawLine(77, 20, 87, 30, SSD1306_WHITE); // Angled eyes
+      display.drawLine(87, 20, 77, 30, SSD1306_WHITE);
+      display.drawLine(105, 20, 115, 30, SSD1306_WHITE);
+      display.drawLine(115, 20, 105, 30, SSD1306_WHITE);
+      display.fillRect(94, 38, 4, 4, SSD1306_WHITE); // Open Mouth (Square)
       break;
       
     case ALERT_LOW:
       // Cold Alert (Squinting/Shivering look)
-      display.drawPixel(50, 25, SSD1306_WHITE); // Tiny eyes
-      display.drawPixel(78, 25, SSD1306_WHITE);
-      display.drawFastHLine(50, 40, 28, SSD1306_WHITE); // Flat line mouth
+      display.drawPixel(82, 25, SSD1306_WHITE); // Tiny eyes
+      display.drawPixel(110, 25, SSD1306_WHITE);
+      display.drawFastHLine(82, 40, 28, SSD1306_WHITE); // Flat line mouth
       break;
 
     case TOUCHED:
       // Winking Face and Big Smile
-      display.fillCircle(50, 25, 3, SSD1306_WHITE); 
-      display.drawLine(75, 25, 81, 25, SSD1306_WHITE); 
-      display.drawCircle(64, 35, 18, SSD1306_WHITE);
-      display.fillRect(46, 35, 36, 18, SSD1306_BLACK);
+      display.fillCircle(82, 25, 3, SSD1306_WHITE); 
+      display.drawLine(107, 25, 113, 25, SSD1306_WHITE); 
+      display.drawCircle(96, 35, 18, SSD1306_WHITE);
+      display.fillRect(78, 35, 36, 18, SSD1306_BLACK);
       break;
 
     case UPDATING:
       // OTA Text and Progress
-      display.fillCircle(64, 32, 30, SSD1306_BLACK); 
+      display.fillCircle(96, 32, 30, SSD1306_BLACK); 
       display.setCursor(10, 10);
       display.println("OTA UPDATE");
       display.drawRect(5, 45, 118, 10, SSD1306_WHITE);
       display.fillRect(7, 47, (millis()/100)%114, 6, SSD1306_WHITE);
       break;
+
+    case SETUP:
+      display.fillCircle(96, 32, 30, SSD1306_BLACK); 
+      display.setCursor(25, 10);
+      display.println("SETUP MODE");
+      display.setCursor(10, 30);
+      display.println("Connect to WiFi");
+      break;
   }
 
-  // Draw environment data on the outer frame
-  display.setCursor(0, 0);
+  // Draw environment data vertically on the left side
+  display.setCursor(0, 10);
   display.print("T:"); display.print(tempC, 1); display.println("C");
-  display.setCursor(0, 56);
-  display.print("H:"); display.print(humidity, 0); display.println("%");
-  display.setCursor(90, 56);
-  display.print("P:"); display.print(pressure_hPa, 0); display.println("hPa");
+  display.setCursor(0, 28);
+  display.print("H:"); display.print(humidity, 0); display.print("%");
+  display.setCursor(0, 46);
+  display.print("P:"); display.print(pressure_hPa, 0); display.print("hPa");
 
   display.display();
 }
+
+// NEW: Inspired by the RoboEyes project for a more expressive look.
+void drawMochiBigEyes(EyeDirection direction) {
+  display.clearDisplay();
+
+  int pupil_dx = 0;
+  int pupil_dy = 0;
+  int eye_w = 48;
+  int eye_h = 60;
+  int pupil_r = 10;
+
+  switch (direction) {
+    case EYES_UP:    pupil_dy = -8; break;
+    case EYES_DOWN:  pupil_dy = 8;  break;
+    case EYES_LEFT:  pupil_dx = -12; break;
+    case EYES_RIGHT: pupil_dx = 12;  break;
+    case EYES_CENTER:
+    default: break;
+  }
+
+  // Left Eye
+  int left_eye_x = 32;
+  display.drawRoundRect(left_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, 15, SSD1306_WHITE);
+  // Left Pupil
+  display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+
+  // Right Eye
+  int right_eye_x = 96;
+  display.drawRoundRect(right_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, 15, SSD1306_WHITE);
+  // Right Pupil
+  display.fillCircle(right_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+
+  // Add a random blinking animation
+  if (random(100) < 5) { // 5% chance to blink on any given draw
+    display.fillRect(left_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, SSD1306_BLACK);
+    display.drawFastHLine(left_eye_x - eye_w/2, 32, eye_w, SSD1306_WHITE);
+    display.fillRect(right_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, SSD1306_BLACK);
+    display.drawFastHLine(right_eye_x - eye_w/2, 32, eye_w, SSD1306_WHITE);
+  }
+
+  display.display();
+}
+
 
 // --------------------------------------------------------------------------------
 // MAIN SETUP & LOOP
@@ -1456,7 +1520,7 @@ void setup() {
   Serial.println("\n--- Smart-Nav-Mitra Firmware Starting ---");
 
   // 1. Hardware Initialization
-  pinMode(TOUCH_PIN, INPUT);
+  pinMode(TOUCH_PIN, INPUT_PULLDOWN); // Use internal pull-down to prevent floating pin
   pinMode(BUZZER_PIN, OUTPUT);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
@@ -1475,8 +1539,22 @@ void setup() {
   }
   // Initialize BMP280
   // The I2C address is often 0x77 or 0x76. If 0x76 doesn't work, try 0x77.
+  bool bmp_found = false;
   if (!bmp.begin(0x76)) {
-    Serial.println("Could not find BMP280 sensor, check wiring!");
+    Serial.println("Could not find BMP280 sensor at 0x76, trying 0x77...");
+    if (bmp.begin(0x77)) {
+      bmp_found = true;
+    }
+  } else {
+    bmp_found = true;
+  }
+
+  if (bmp_found) {
+    /* Default settings from datasheet. */
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, Adafruit_BMP280::SAMPLING_X2, Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16, Adafruit_BMP280::STANDBY_MS_500);
+    Serial.println("BMP280 sensor configured successfully.");
+  } else {
+    Serial.println("Could not find BMP280 sensor at any address. Check wiring!");
   }
 
   // Initialize history data
@@ -1486,11 +1564,13 @@ void setup() {
   loadConfig();
   
   if (staSsid.length() > 0) {
+    currentState = HAPPY; // Assume we will connect
     if (!connectToWiFi()) {
       // Failed to connect (wrong password/router down), fallback to Captive Portal
       startCaptivePortal();
     }
   } else {
+    currentState = SETUP; // No config, so go to setup mode
     // No saved credentials, start Captive Portal immediately
     startCaptivePortal();
   }
@@ -1511,10 +1591,16 @@ void setup() {
     Serial.println("\nFailed to synchronize time. Proceeding without it.");
   }
 
-  // Read sensors initially
+  // Perform an initial sensor read and state check to set the correct state before the first loop.
   readSensors();
+  checkTouchAndEnvironment();
+  drawMochiBigEyes(EYES_CENTER); // Start with the big eyes display
   Serial.println("Smart-Nav-Mitra is ready!");
+  
+  lastState = currentState; // Set lastState to the current state so the loop doesn't redraw immediately.
   lastActivityTime = millis(); // Initialize activity timer
+  lastEyeMoveTime = millis(); // Initialize eye animation timer
+  lastParamShowTime = millis(); // Initialize parameter display timer
 }
 
 void loop() {
@@ -1576,29 +1662,48 @@ void loop() {
     }
   }
 
-  // OLED Timeout Logic
-  if (isQuietHours()) {
-    if (!isDisplayOff) {
-      isDisplayOff = true;
-      display.clearDisplay();
-      display.display();
-    }
-  } else if (oledTimeoutMins > 0 && !isDisplayOff) {
-    // Handle regular timeout only if not in quiet hours
-    if (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000) {
-      isDisplayOff = true;
-      display.clearDisplay();
-      display.display();
-    }
+  // OLED Timeout Logic is temporarily disabled to keep the screen on always.
+  // The logic for screen timeout and quiet hours screen-off has been commented out.
+  isDisplayOff = false; // Force display to be considered ON.
+
+  // --- NEW DISPLAY LOGIC ---
+  if (isDisplayOff) {
+    return; // Don't do any display logic if screen is off
   }
 
-  // Redraw the face based on the current state
-  // Only redraw if the state has changed to prevent flicker and save resources
-  // Also, don't draw if the display is supposed to be off
-  if (!isDisplayOff) {    
-    if (currentState != lastState) {
-      drawMochiFace(currentState);
-      lastState = currentState;
+  // --- FINAL, ROBUST DISPLAY STATE MACHINE ---
+
+  // Step 1: Check for high-priority alerts. They force the parameter screen.
+  if (currentState == ALERT_HIGH || currentState == ALERT_LOW) {
+    drawMochiFace(currentState);
+    return; // Exit the display logic to ensure the alert is always shown.
+  }
+
+  // Step 2: Handle the periodic switching logic.
+  if (isShowingParameters) {
+    // We are currently showing the parameter screen.
+    drawMochiFace(currentState); // Keep drawing it.
+
+    // Check if the 10-second display duration has passed.
+    if (millis() - paramScreenStartTime > PARAM_DISPLAY_DURATION) {
+      isShowingParameters = false; // Time to switch back.
+      lastParamShowTime = millis(); // Reset the 10-second timer.
+      drawMochiBigEyes(EYES_CENTER); // Draw the eyes once to switch back immediately.
+    }
+  } else {
+    // We are currently showing the big eyes.
+    // Check if the 10-second interval has passed.
+    if (millis() - lastParamShowTime > PARAM_SHOW_INTERVAL) {
+      isShowingParameters = true; // Time to switch to parameters.
+      paramScreenStartTime = millis(); // Start the 10-second timer.
+      drawMochiFace(currentState); // Draw the parameter screen ONCE to switch immediately.
+    } else {
+      // Animate the eyes periodically.
+      if (millis() - lastEyeMoveTime > EYE_MOVE_INTERVAL) {
+        lastEyeMoveTime = millis();
+        currentEyeDirection = (EyeDirection)random(0, 5);
+        drawMochiBigEyes(currentEyeDirection);
+      }
     }
   }
   

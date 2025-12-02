@@ -1042,10 +1042,10 @@ void handleRoot(AsyncWebServerRequest *request) {
   String greeting = "";
   struct tm timeinfo;
   if(getLocalTime(&timeinfo)){
-    int currentHour = timeinfo.tm_hour;
-    if (currentHour >= 5 && currentHour < 12) {
+    int hour = timeinfo.tm_hour;
+    if (hour >= 0 && hour < 12) { // From midnight (12 AM) to 11:59 AM
       greeting = "Good morning.";
-    } else if (currentHour >= 12 && currentHour < 18) {
+    } else if (hour >= 12 && hour < 18) { // From noon (12 PM) to 5:59 PM
       greeting = "Good afternoon.";
     } else {
       greeting = "Good evening.";
@@ -1066,7 +1066,7 @@ void handleRoot(AsyncWebServerRequest *request) {
   // Replace sensor/state data
   html.replace("%TEMP_C%", String(tempC, 1));
   html.replace("%HUMIDITY%", String(humidity, 0));
-  html.replace("%PRESSURE%", String(pressure_hPa, 0));
+  html.replace("%PRESSURE%", (pressure_hPa < 0) ? "N/A" : String((int)pressure_hPa));
   
   // State to string (for the System Health card)
   String stateStr;
@@ -1091,7 +1091,11 @@ void handleData(AsyncWebServerRequest *request) {
 
     doc["tempC"] = tempC;
     doc["humidity"] = humidity;
-    doc["pressure_hPa"] = pressure_hPa;
+    if (pressure_hPa < 0) {
+      doc["pressure_hPa"] = "N/A";
+    } else {
+      doc["pressure_hPa"] = (int)pressure_hPa;
+    }
     doc["state"] = currentState;
     doc["uptime"] = millis();
     
@@ -1295,8 +1299,13 @@ void readSensors() {
     tempC = 0.0; humidity = 0.0; // Prevent using stale data on failure
   }
 
+  // Add a small delay before reading the next sensor on the same I2C bus
+  delay(10); 
+
   // Use the BMP280 for Pressure
-  pressure_hPa = bmp.readPressure() / 100.0F; // This line was missing/commented out
+  if (bmp.sensorID() != 0) { // Only read if the sensor was found
+    pressure_hPa = bmp.readPressure() / 100.0F;
+  }
 
   Serial.printf("T: %.2f C, H: %.2f %%, P: %.2f hPa\n", tempC, humidity, pressure_hPa);
 }
@@ -1407,35 +1416,28 @@ void drawMochiFace(MochiState state) {
 
   switch (state) {
     case HAPPY:
-      // Happy Eyes and Smile
-      display.fillCircle(82, 25, 3, SSD1306_WHITE);
-      display.fillCircle(110, 25, 3, SSD1306_WHITE);
-      display.drawCircle(96, 32, 15, SSD1306_WHITE);
-      display.fillRect(81, 32, 30, 15, SSD1306_BLACK); 
+      // Simple Happy Face :)
+      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
+      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
+      display.drawCircle(96, 34, 10, SSD1306_WHITE); // Draw a circle for the mouth
+      display.fillRect(86, 24, 22, 11, SSD1306_BLACK); // Cover the top part to make a smile
       break;
 
     case ALERT_HIGH:
-      // Hot Alert (Sweaty/Panting look)
-      display.drawLine(77, 20, 87, 30, SSD1306_WHITE); // Angled eyes
-      display.drawLine(87, 20, 77, 30, SSD1306_WHITE);
-      display.drawLine(105, 20, 115, 30, SSD1306_WHITE);
-      display.drawLine(115, 20, 105, 30, SSD1306_WHITE);
-      display.fillRect(94, 38, 4, 4, SSD1306_WHITE); // Open Mouth (Square)
-      break;
-      
     case ALERT_LOW:
-      // Cold Alert (Squinting/Shivering look)
-      display.drawPixel(82, 25, SSD1306_WHITE); // Tiny eyes
-      display.drawPixel(110, 25, SSD1306_WHITE);
-      display.drawFastHLine(82, 40, 28, SSD1306_WHITE); // Flat line mouth
+      // Simple Sad Face :(
+      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
+      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
+      display.drawCircle(96, 42, 10, SSD1306_WHITE); // Draw a circle for the mouth
+      display.fillRect(86, 42, 22, 11, SSD1306_BLACK); // Cover the bottom part to make a frown
       break;
 
     case TOUCHED:
       // Winking Face and Big Smile
-      display.fillCircle(82, 25, 3, SSD1306_WHITE); 
-      display.drawLine(107, 25, 113, 25, SSD1306_WHITE); 
-      display.drawCircle(96, 35, 18, SSD1306_WHITE);
-      display.fillRect(78, 35, 36, 18, SSD1306_BLACK);
+      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
+      display.drawFastHLine(102, 25, 10, SSD1306_WHITE); // Right eye (wink)
+      display.drawCircle(96, 34, 10, SSD1306_WHITE); // Draw a circle for the mouth
+      display.fillRect(86, 24, 22, 11, SSD1306_BLACK); // Cover the top part to make a smile
       break;
 
     case UPDATING:
@@ -1462,7 +1464,7 @@ void drawMochiFace(MochiState state) {
   display.setCursor(0, 28);
   display.print("H:"); display.print(humidity, 0); display.print("%");
   display.setCursor(0, 46);
-  display.print("P:"); display.print(pressure_hPa, 0); display.print("hPa");
+  display.print((pressure_hPa < 0) ? "P: N/A" : "P:" + String((int)pressure_hPa) + "hPa");
 
   display.display();
 }
@@ -1539,22 +1541,13 @@ void setup() {
   }
   // Initialize BMP280
   // The I2C address is often 0x77 or 0x76. If 0x76 doesn't work, try 0x77.
-  bool bmp_found = false;
-  if (!bmp.begin(0x76)) {
-    Serial.println("Could not find BMP280 sensor at 0x76, trying 0x77...");
-    if (bmp.begin(0x77)) {
-      bmp_found = true;
-    }
+  if (!bmp.begin(0x76) && !bmp.begin(0x77)) {
+    Serial.println(F("BMP280 sensor not found. Pressure readings will be disabled."));
+    pressure_hPa = -1; // Set to -1 to indicate not available
   } else {
-    bmp_found = true;
-  }
-
-  if (bmp_found) {
     /* Default settings from datasheet. */
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, Adafruit_BMP280::SAMPLING_X2, Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16, Adafruit_BMP280::STANDBY_MS_500);
-    Serial.println("BMP280 sensor configured successfully.");
-  } else {
-    Serial.println("Could not find BMP280 sensor at any address. Check wiring!");
+    Serial.println("BMP280 sensor initialization complete.");
   }
 
   // Initialize history data

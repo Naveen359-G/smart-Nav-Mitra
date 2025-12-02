@@ -57,6 +57,7 @@ String staPass = "";
 #define TOUCH_PIN 7         // GPIO 7 for Touch Input
 #define BUZZER_PIN 6        // GPIO 6 for Active Buzzer
 
+
 // Environment Thresholds
 float tempAlertHigh = 30.0; // Celsius
 float tempAlertLow = 18.0;  // Celsius
@@ -1527,7 +1528,7 @@ void setup() {
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
   // Initialize OLED
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
     Serial.println(F("SSD1306 allocation failed"));
     for (;;); 
   }
@@ -1625,8 +1626,8 @@ void loop() {
   if (digitalRead(TOUCH_PIN) == HIGH) {
     if (isDisplayOff) {
       isDisplayOff = false; // Wake up screen
-      // Force a redraw on wake-up
-      lastState = (MochiState)-1; // An invalid state to force redraw
+      // Force a redraw on wake-up by invalidating the last state
+      lastState = (MochiState)-1; 
     }
     lastActivityTime = millis(); // Reset activity timer
   }
@@ -1655,9 +1656,29 @@ void loop() {
     }
   }
 
-  // OLED Timeout Logic is temporarily disabled to keep the screen on always.
-  // The logic for screen timeout and quiet hours screen-off has been commented out.
-  isDisplayOff = false; // Force display to be considered ON.
+  // OLED Timeout Logic
+  // Add a 10-second grace period on boot to prevent premature screen-off due to time sync issues.
+  if (millis() > 10000) {
+    // Only check for timeout/quiet hours if the screen is currently on.
+    if (!isDisplayOff) {
+      bool shouldTurnOff = false;
+
+      // Reason 1: Quiet hours are active.
+      if (isQuietHours()) {
+        shouldTurnOff = true;
+      }
+      // Reason 2: The inactivity timeout has been reached.
+      else if (oledTimeoutMins > 0 && (millis() - lastActivityTime > (unsigned long)oledTimeoutMins * 60 * 1000)) {
+        shouldTurnOff = true;
+      }
+
+      if (shouldTurnOff) {
+        isDisplayOff = true;
+        display.clearDisplay();
+        display.display();
+      }
+    }
+  }
 
   // --- NEW DISPLAY LOGIC ---
   if (isDisplayOff) {

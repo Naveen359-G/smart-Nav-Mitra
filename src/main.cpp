@@ -52,8 +52,8 @@ String staPass = "";
 #define OLED_RESET -1       // Reset pin
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
 #define SCREEN_HEIGHT 64    // OLED display height, in pixels
-#define I2C_SDA_PIN 8       // GPIO 8 for SDA (Adjust based on your ESP32 board)
-#define I2C_SCL_PIN 9       // GPIO 9 for SCL (Adjust based on your ESP32 board)
+#define I2C_SDA_PIN 4       // Correct, safe I2C SDA pin for ESP32-C3
+#define I2C_SCL_PIN 5       // Correct, safe I2C SCL pin for ESP32-C3
 #define TOUCH_PIN 7         // GPIO 7 for Touch Input
 #define BUZZER_PIN 6        // GPIO 6 for Active Buzzer
 
@@ -75,7 +75,7 @@ uint8_t alarmMinute = 30;
 bool alarmHasTriggeredToday = false;
 
 // --- OBJECT INSTANCES ---
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET); // Uses default Wire (I2C0)
 Adafruit_AHTX0 aht;
 Adafruit_BMP280 bmp; // I2C
 AsyncWebServer server(80);
@@ -1525,6 +1525,7 @@ void setup() {
   // 1. Hardware Initialization
   pinMode(TOUCH_PIN, INPUT_PULLDOWN); // Use internal pull-down to prevent floating pin
   pinMode(BUZZER_PIN, OUTPUT);
+  // Initialize the single, stable I2C bus for all devices
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
   // Initialize OLED
@@ -1535,9 +1536,8 @@ void setup() {
   display.setRotation(2); // Rotate 180 degrees if your screen is upside down
   display.clearDisplay();
 
-  // Initialize BME280
-  // Initialize AHT20
-  if (!aht.begin()) {
+  // Initialize AHT20 on the secondary bus
+  if (!aht.begin()) { 
     Serial.println("Could not find AHT20 sensor, check wiring!");
   }
   // Initialize BMP280

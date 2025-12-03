@@ -42,3 +42,15 @@ The project underwent a naming evolution and was fully documented.
 -   **AI/TinyML Integration (On Hold):** An attempt was made to integrate TensorFlow Lite for gesture recognition. This was paused due to persistent, complex build errors with the library on the target hardware. This remains a future goal.
 -   **Advanced Sensing (Next Up):** The `README.md` has been updated to plan for the integration of a **BH1750 light sensor** and an **INMP441 microphone** in the next phase of development.
 -   **Smart Home & Usability (Planned):** Future plans include implementing **MQTT support** for integration with platforms like Home Assistant and adding a **Wi-Fi scanner** to the setup page.
+
+## 5. Hardware Stability & Refactoring
+
+A significant effort was made to resolve hardware instability where the OLED display and the I2C sensors (AHT20, BMP280) would not work simultaneously.
+
+-   **Problem:** The device exhibited erratic behavior. Either the OLED would work while sensor readings failed (showing `0` or `N/A`), or the sensors would work while the OLED remained off. This was a critical blocker for the project.
+-   **Investigation:** The root cause was identified as using `GPIO 8` and `GPIO 9` for the I2C bus. These are strapping pins on the ESP32-C3, and the combined pull-up resistors from the multiple I2C devices were interfering with the chip's boot mode, causing unpredictable behavior. Attempts to use two separate I2C buses also failed due to pin conflicts or the underlying instability of the strapping pins.
+-   **Solution:** A stable configuration was achieved by moving all I2C devices (OLED, AHT20, BMP280) to a single, shared I2C bus on the recommended, non-strapping pins:
+    -   **SDA -> GPIO 4**
+    -   **SCL -> GPIO 5**
+-   **Result:** This change completely resolved the instability. All I2C components now initialize and operate reliably on a single bus. The firmware and `README.md` were updated to reflect this final, correct pin configuration.
+-   **Code Refactoring:** The display logic in the main `loop()` was refactored into a dedicated `updateDisplay()` function. This improves code readability and consolidates all screen drawing logic into a single state machine, making future modifications easier.

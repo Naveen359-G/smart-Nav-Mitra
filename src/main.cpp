@@ -159,6 +159,7 @@ void readSensors();
 void checkTouchAndEnvironment();
 void buzzAlert(int durationMs);
 
+void updateDisplay(); // New function prototype for consolidated display logic
 #if DATA_COLLECTION_MODE == 0 // This wraps the main application logic
 
 // ------------------------------------
@@ -1588,6 +1589,7 @@ void setup() {
   // Perform an initial sensor read and state check to set the correct state before the first loop.
   readSensors();
   checkTouchAndEnvironment();
+  updateDisplay(); // Initial display draw
   drawMochiBigEyes(EYES_CENTER); // Start with the big eyes display
   Serial.println("Smart-Nav-Mitra is ready!");
   
@@ -1680,48 +1682,52 @@ void loop() {
     }
   }
 
-  // --- NEW DISPLAY LOGIC ---
+  // Update the display based on the current state and timers
+  updateDisplay();
+  
+  delay(10); // Small delay to prevent the loop from running too fast
+}
+
+void updateDisplay() {
   if (isDisplayOff) {
     return; // Don't do any display logic if screen is off
   }
 
   // --- FINAL, ROBUST DISPLAY STATE MACHINE ---
 
-  // Step 1: Check for high-priority alerts. They force the parameter screen.
+  // Step 1: Check for high-priority states that override animations.
   if (currentState == ALERT_HIGH || currentState == ALERT_LOW) {
     drawMochiFace(currentState);
     return; // Exit the display logic to ensure the alert is always shown.
   }
 
-  // Step 2: Handle the periodic switching logic.
+  // Step 2: Handle the periodic switching between "Big Eyes" and "Parameters".
   if (isShowingParameters) {
     // We are currently showing the parameter screen.
     drawMochiFace(currentState); // Keep drawing it.
 
-    // Check if the 10-second display duration has passed.
+    // Check if the display duration has passed.
     if (millis() - paramScreenStartTime > PARAM_DISPLAY_DURATION) {
       isShowingParameters = false; // Time to switch back.
-      lastParamShowTime = millis(); // Reset the 10-second timer.
+      lastParamShowTime = millis(); // Reset the interval timer.
       drawMochiBigEyes(EYES_CENTER); // Draw the eyes once to switch back immediately.
     }
   } else {
     // We are currently showing the big eyes.
-    // Check if the 10-second interval has passed.
+    // Check if the interval has passed to show parameters.
     if (millis() - lastParamShowTime > PARAM_SHOW_INTERVAL) {
       isShowingParameters = true; // Time to switch to parameters.
-      paramScreenStartTime = millis(); // Start the 10-second timer.
+      paramScreenStartTime = millis(); // Start the display duration timer.
       drawMochiFace(currentState); // Draw the parameter screen ONCE to switch immediately.
     } else {
       // Animate the eyes periodically.
       if (millis() - lastEyeMoveTime > EYE_MOVE_INTERVAL) {
         lastEyeMoveTime = millis();
-        currentEyeDirection = (EyeDirection)random(0, 5);
+        currentEyeDirection = (EyeDirection)random(0, 5); // 0 to 4
         drawMochiBigEyes(currentEyeDirection);
       }
     }
   }
-  
-  delay(10); // Small delay to prevent the loop from running too fast
 }
 
 #elif DATA_COLLECTION_MODE == 1 // This block runs if DATA_COLLECTION_MODE is 1

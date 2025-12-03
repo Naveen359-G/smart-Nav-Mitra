@@ -63,16 +63,16 @@ Wire the components to the ESP32-C3 according to the table below. These pins are
 | :--- | :--- | :--- |
 | **AHT20/BMP280 VDD** | `3V3` | Power for sensors |
 | **AHT20/BMP280 GND** | `GND` | Common Ground |
-| **AHT20/BMP280 SCL** | `GPIO 9` | I2C Clock |
-| **AHT20/BMP280 SDA** | `GPIO 8` | I2C Data |
+| **AHT20/BMP280 SCL** | `GPIO 5` | I2C Clock |
+| **AHT20/BMP280 SDA** | `GPIO 4` | I2C Data |
 | **BH1750 VCC** | `3V3` | Power for light sensor |
 | **BH1750 GND** | `GND` | Common Ground |
-| **BH1750 SCL** | `GPIO 9` | I2C Clock (shared) |
-| **BH1750 SDA** | `GPIO 8` | I2C Data (shared) |
+| **BH1750 SCL** | `GPIO 5` | I2C Clock (shared) |
+| **BH1750 SDA** | `GPIO 4` | I2C Data (shared) |
 | **OLED VDD** | `3V3` | Power for OLED |
 | **OLED GND** | `GND` | Common Ground |
-| **OLED SCL** | `GPIO 9` | I2C Clock (shared) |
-| **OLED SDA** | `GPIO 8` | I2C Data (shared) |
+| **OLED SCL** | `GPIO 5` | I2C Clock (shared) |
+| **OLED SDA** | `GPIO 4` | I2C Data (shared) |
 | **Touch Sensor VCC** | `3V3` | Power for touch sensor |
 | **Touch Sensor GND** | `GND` | Common Ground |
 | **Touch Sensor I/O** | `GPIO 7` | Touch signal output |

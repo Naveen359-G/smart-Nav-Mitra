@@ -117,6 +117,24 @@ const long EYE_MOVE_INTERVAL = 2000; // Move eyes every 2 seconds
 const long PARAM_SHOW_INTERVAL = 10000; // Show parameters every 10 seconds
 const long PARAM_DISPLAY_DURATION = 10000; // For 10 seconds
 
+// --- NEW: Touch Gesture Detection Engine ---
+unsigned long touchStart = 0;
+unsigned long lastTap = 0;
+int tapCount = 0;
+bool touchActive = false;
+
+// --- NEW: Alarm State Management ---
+bool alarmIsRinging = false;
+bool alarmIsSnoozed = false;
+unsigned long alarmStartTime = 0;
+unsigned long snoozeUntilTime = 0;
+unsigned long lastAlarmBeepTime = 0;
+
+// --- NEW: Find My Mochi State ---
+bool findMeIsActive = false;
+unsigned long findMeStartTime = 0;
+unsigned long lastFindMeBeepTime = 0;
+
 
 // Sensor Readings (Global for easy access)
 float tempC = 0.0;
@@ -148,16 +166,27 @@ void handleSaveConfig(AsyncWebServerRequest *request);
 void handleSettings(AsyncWebServerRequest *request);
 void handleSaveSettings(AsyncWebServerRequest *request);
 void handleReboot(AsyncWebServerRequest *request);
-void drawMochiFace(MochiState state);
 void handleUpdate(AsyncWebServerRequest *request);
-void drawMochiBigEyes(EyeDirection direction);
 void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
-void handleUpdateSuccess(AsyncWebServerRequest *request);
 bool isQuietHours();
 void checkAlarm();
 void readSensors();
-void checkTouchAndEnvironment();
-void buzzAlert(int durationMs);
+
+// --- NEW: Core Interaction System Prototypes ---
+void drawParameterScreen();
+void drawMochiFace(MochiState state, EyeDirection direction = EYES_CENTER);
+String detectTouchGesture();
+void beep(int freq, int dur);
+void toneConfirm();
+void toneError();
+void toneHappy();
+void playFindMyMochi();
+void handleUpdateSuccess(AsyncWebServerRequest *request);
+void handleFind(AsyncWebServerRequest *request);
+void startAlarm();
+void stopAlarm();
+void snoozeAlarm();
+void checkEnvironment();
 
 void updateDisplay(); // New function prototype for consolidated display logic
 #if DATA_COLLECTION_MODE == 0 // This wraps the main application logic
@@ -408,6 +437,7 @@ const char* MAIN_HTML = R"raw(
         .actions {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap; /* Allow buttons to wrap on small screens */
             margin-top: 20px;
         }
         .action-btn {
@@ -422,6 +452,7 @@ const char* MAIN_HTML = R"raw(
         .action-btn:hover { opacity: 0.85; }
         .btn-settings { background-color: var(--secondary); }
         .btn-reboot { background-color: var(--warning); }
+        .btn-find { background-color: #1E90FF; } /* Dodger Blue */
 
         @media (max-width: 650px) {
             .info-grid {
@@ -463,6 +494,7 @@ const char* MAIN_HTML = R"raw(
             <div class="actions">
                 <button class="action-btn btn-settings" onclick="window.location.href='/settings'">Settings</button>
                 <button class="action-btn btn-reboot" onclick="rebootDevice()">Reboot</button>
+                <button class="action-btn btn-find" onclick="findMochi()">Find Me!</button>
             </div>
         </div>
 
@@ -628,6 +660,14 @@ const char* MAIN_HTML = R"raw(
                     })
                     .catch(error => console.error('Error sending reboot command:', error));
             }
+        }
+
+        function findMochi() {
+            fetch('/find', { method: 'POST' })
+                .then(response => {
+                    if (!response.ok) alert('Failed to send Find Me command.');
+                })
+                .catch(error => console.error('Error sending find command:', error));
         }
 
         function initChart(history) {
@@ -984,7 +1024,7 @@ void startCaptivePortal() {
   
   // Show SETUP state on OLED during configuration
   currentState = SETUP; 
-  drawMochiFace(currentState);
+  drawMochiFace(SETUP);
 }
 
 // Try to connect to saved Wi-Fi credentials
@@ -1022,6 +1062,7 @@ bool connectToWiFi() {
     server.on("/reboot", HTTP_POST, handleReboot);
     server.on("/update", HTTP_GET, handleUpdate);
     server.on("/update", HTTP_POST, handleUpdateSuccess, handleUpdateUpload);
+    server.on("/find", HTTP_POST, handleFind); // Add the new endpoint
     server.begin();
     
     // Resume HAPPY state after connection
@@ -1263,6 +1304,12 @@ void handleReboot(AsyncWebServerRequest *request) {
     ESP.restart();
 }
 
+void handleFind(AsyncWebServerRequest *request) {
+    playFindMyMochi(); // Trigger the non-blocking find sequence
+    request->send(200, "text/plain", "OK");
+}
+
+
 void setupOTA() {
   ArduinoOTA.setHostname(deviceName.c_str());
   ArduinoOTA.setPassword("mochipass"); // CHANGE THIS IN PRODUCTION!
@@ -1312,58 +1359,27 @@ void readSensors() {
   Serial.printf("T: %.2f C, H: %.2f %%, P: %.2f hPa\n", tempC, humidity, pressure_hPa);
 }
 
-void checkTouchAndEnvironment() {
-  // 1. Touch Input Check (Highest priority, overrides all states temporarily)
-  if (digitalRead(TOUCH_PIN) == HIGH) {
-    if (currentState != TOUCHED) {
-      currentState = TOUCHED;
-      touchTimer = millis();
-      buzzAlert(100); // Quick buzz feedback
-      Serial.println("Touch detected!");
-    }
-  }
-
-  // 2. Environment Alert Check (Only proceed if not TOUCHED or UPDATING)
-  // The main loop now ensures this is only called when not in a temporary state.
-  // It also ensures sensors are read just before this check.
-  
-  // Add a "warm-up" period. Don't check for environmental alerts for the first 5 seconds
-  // to allow sensors to stabilize and prevent false alerts on boot.
-  if (millis() < 5000) {
-    currentState = HAPPY;
+void checkEnvironment() {
+  // This function sets the background state based on temperature.
+  // It should only run when not in a temporary user-interaction state.
+  if (currentState == TOUCHED || currentState == UPDATING || currentState == SETUP) {
     return;
   }
-    // High Temperature Alert
-    if (tempC > tempAlertHigh) {
-      if (currentState != ALERT_HIGH) { // Only change state and print once
-        currentState = ALERT_HIGH;
-        Serial.println("High Temperature Alert!");
-      }
-      buzzAlert(50); // Small repeating buzz while in alert state
-    } 
-    // Low Temperature Alert
-    else if (tempC < tempAlertLow) {
-      if (currentState != ALERT_LOW) { // Only change state and print once
-        currentState = ALERT_LOW;
-        Serial.println("Low Temperature Alert!");
-      }
-      buzzAlert(50); // Small repeating buzz while in alert state
-    }
-    // No Alert
-    else {
-      if (currentState != HAPPY) { // If it was in any alert state, return to happy
-        currentState = HAPPY;
-        Serial.println("Temperature returned to normal.");
-      }
-    }
-}
 
-void buzzAlert(int durationMs) {
-  if (!buzzerEnabled || isQuietHours()) return; // Check if buzzer is enabled and not quiet hours
-
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(durationMs);
-  digitalWrite(BUZZER_PIN, LOW);
+  // High Temperature Alert -> Angry
+  if (tempC > tempAlertHigh) {
+    if (currentState != ALERT_HIGH) Serial.println("High Temperature Alert!");
+    currentState = ALERT_HIGH;
+  } 
+  // Low Temperature Alert -> Sick
+  else if (tempC < tempAlertLow) {
+    if (currentState != ALERT_LOW) Serial.println("Low Temperature Alert!");
+    currentState = ALERT_LOW;
+  }
+  // No Alert -> Happy
+  else {
+    currentState = HAPPY;
+  }
 }
 
 bool isQuietHours() {
@@ -1381,6 +1397,38 @@ bool isQuietHours() {
   }
 }
 
+void startAlarm() {
+  if (!alarmEnabled || isQuietHours()) return;
+  Serial.println("ALARM! WAKE UP!");
+  alarmIsRinging = true;
+  alarmIsSnoozed = false;
+  alarmStartTime = millis();
+  lastActivityTime = millis(); // Wake up screen
+  if(isDisplayOff) isDisplayOff = false;
+  drawMochiFace(HAPPY); // Show a surprised/alert face, for now HAPPY is a good stand-in
+}
+
+void stopAlarm() {
+  Serial.println("Alarm stopped for the day.");
+  alarmIsRinging = false;
+  alarmIsSnoozed = false;
+  alarmHasTriggeredToday = true; // Prevent it from triggering again today
+  drawMochiFace(HAPPY); // Revert to a neutral face
+  // Play confirmation tone: 5 short beeps
+  for (int i = 0; i < 5; i++) beep(2000, 80);
+}
+
+void snoozeAlarm() {
+  Serial.println("Alarm snoozed for 7 minutes.");
+  alarmIsRinging = false;
+  alarmIsSnoozed = true;
+  snoozeUntilTime = millis() + (7 * 60 * 1000); // 7 minutes from now
+  drawMochiFace(HAPPY); // Could be a sleepy face
+  // Play confirmation tone: 3 short beeps
+  for (int i = 0; i < 3; i++) beep(1200, 80);
+}
+
+
 void checkAlarm() {
   if (!alarmEnabled) return;
 
@@ -1389,12 +1437,7 @@ void checkAlarm() {
 
   if (timeinfo.tm_hour == alarmHour && timeinfo.tm_min == alarmMinute && !alarmHasTriggeredToday) {
     Serial.println("ALARM! WAKE UP!");
-    alarmHasTriggeredToday = true; // Prevent it from triggering again today
-    lastActivityTime = millis(); // Wake up screen
-    // Play a distinct alarm sound
-    for (int i = 0; i < 5; i++) {
-      digitalWrite(BUZZER_PIN, HIGH); delay(200); digitalWrite(BUZZER_PIN, LOW); delay(100);
-    }
+    startAlarm();
   }
 
   // Reset the alarm trigger flag just after midnight
@@ -1404,61 +1447,13 @@ void checkAlarm() {
 }
 
 // --------------------------------------------------------------------------------
-// OLED DISPLAY (Facial Expressions)
+// --- NEW: Core Interaction System (Emotions, Gestures, Sounds) ---
 // --------------------------------------------------------------------------------
 
-void drawMochiFace(MochiState state) {
+void drawParameterScreen() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-
-  // Draw the main Mochi shape, aligned to the right
-  display.fillCircle(96, 32, 30, SSD1306_WHITE);
-  display.fillCircle(96, 32, 28, SSD1306_BLACK);
-
-  switch (state) {
-    case HAPPY:
-      // Simple Happy Face :)
-      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
-      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
-      display.drawCircle(96, 34, 10, SSD1306_WHITE); // Draw a circle for the mouth
-      display.fillRect(86, 24, 22, 11, SSD1306_BLACK); // Cover the top part to make a smile
-      break;
-
-    case ALERT_HIGH:
-    case ALERT_LOW:
-      // Simple Sad Face :(
-      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
-      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
-      display.drawCircle(96, 42, 10, SSD1306_WHITE); // Draw a circle for the mouth
-      display.fillRect(86, 42, 22, 11, SSD1306_BLACK); // Cover the bottom part to make a frown
-      break;
-
-    case TOUCHED:
-      // Winking Face and Big Smile
-      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
-      display.drawFastHLine(102, 25, 10, SSD1306_WHITE); // Right eye (wink)
-      display.drawCircle(96, 34, 10, SSD1306_WHITE); // Draw a circle for the mouth
-      display.fillRect(86, 24, 22, 11, SSD1306_BLACK); // Cover the top part to make a smile
-      break;
-
-    case UPDATING:
-      // OTA Text and Progress
-      display.fillCircle(96, 32, 30, SSD1306_BLACK); 
-      display.setCursor(10, 10);
-      display.println("OTA UPDATE");
-      display.drawRect(5, 45, 118, 10, SSD1306_WHITE);
-      display.fillRect(7, 47, (millis()/100)%114, 6, SSD1306_WHITE);
-      break;
-
-    case SETUP:
-      display.fillCircle(96, 32, 30, SSD1306_BLACK); 
-      display.setCursor(25, 10);
-      display.println("SETUP MODE");
-      display.setCursor(10, 30);
-      display.println("Connect to WiFi");
-      break;
-  }
 
   // Draw environment data vertically on the left side
   display.setCursor(0, 10);
@@ -1466,51 +1461,166 @@ void drawMochiFace(MochiState state) {
   display.setCursor(0, 28);
   display.print("H:"); display.print(humidity, 0); display.print("%");
   display.setCursor(0, 46);
-  display.print((pressure_hPa < 0) ? "P: N/A" : "P:" + String((int)pressure_hPa) + "hPa");
+  display.print((pressure_hPa < 0) ? "P: N/A" : "P:" + String((int)pressure_hPa));
 
+  // Draw the main Mochi shape, aligned to the right
+  display.fillCircle(96, 32, 30, SSD1306_WHITE);
+  display.fillCircle(96, 32, 28, SSD1306_BLACK);
+
+  // Draw a simple happy or sad face based on the current state
+  if (currentState == ALERT_HIGH || currentState == ALERT_LOW) { // Sad face
+      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
+      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
+      display.drawCircle(96, 42, 10, SSD1306_WHITE); // Draw a circle for the mouth
+      display.fillRect(86, 42, 22, 11, SSD1306_BLACK); // Cover the bottom part to make a frown
+  } else { // Happy face
+      display.fillCircle(85, 25, 4, SSD1306_WHITE); // Left eye
+      display.fillCircle(107, 25, 4, SSD1306_WHITE); // Right eye
+      display.drawCircle(96, 34, 10, SSD1306_WHITE); // Draw a circle for the mouth
+      display.fillRect(86, 24, 22, 11, SSD1306_BLACK); // Cover the top part to make a smile
+  }
   display.display();
 }
 
-// NEW: Inspired by the RoboEyes project for a more expressive look.
-void drawMochiBigEyes(EyeDirection direction) {
+void drawMochiFace(MochiState state, EyeDirection direction) {
   display.clearDisplay();
 
-  int pupil_dx = 0;
-  int pupil_dy = 0;
-  int eye_w = 48;
-  int eye_h = 60;
-  int pupil_r = 10;
+  // Handle special full-screen states first
+  if (state == UPDATING) {
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(10, 10);
+      display.println("OTA UPDATE");
+      display.drawRect(5, 45, 118, 10, SSD1306_WHITE);
+      display.fillRect(7, 47, (millis()/100)%114, 6, SSD1306_WHITE);
+      display.display();
+      return;
+  } else if (state == SETUP) {
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(25, 10);
+      display.println("SETUP MODE");
+      display.setCursor(10, 30);
+      display.println("Connect to WiFi");
+      display.display();
+      return;
+  }
+
+  // --- Draw Big Eyes with Expressions ---
+  int pupil_dx = 0, pupil_dy = 0;
+  int eye_w = 48, eye_h = 60, pupil_r = 10;
+  int left_eye_x = 32, right_eye_x = 96;
 
   switch (direction) {
     case EYES_UP:    pupil_dy = -8; break;
     case EYES_DOWN:  pupil_dy = 8;  break;
     case EYES_LEFT:  pupil_dx = -12; break;
-    case EYES_RIGHT: pupil_dx = 12;  break;
-    case EYES_CENTER:
+    case EYES_RIGHT: pupil_dx = 12; break;
     default: break;
   }
 
-  // Left Eye
-  int left_eye_x = 32;
+  // Draw Eye Sockets
   display.drawRoundRect(left_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, 15, SSD1306_WHITE);
-  // Left Pupil
-  display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
-
-  // Right Eye
-  int right_eye_x = 96;
   display.drawRoundRect(right_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, 15, SSD1306_WHITE);
-  // Right Pupil
-  display.fillCircle(right_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
 
-  // Add a random blinking animation
-  if (random(100) < 5) { // 5% chance to blink on any given draw
-    display.fillRect(left_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, SSD1306_BLACK);
-    display.drawFastHLine(left_eye_x - eye_w/2, 32, eye_w, SSD1306_WHITE);
-    display.fillRect(right_eye_x - eye_w/2, 32 - eye_h/2, eye_w, eye_h, SSD1306_BLACK);
-    display.drawFastHLine(right_eye_x - eye_w/2, 32, eye_w, SSD1306_WHITE);
+  // Draw Pupils and Expressions based on state
+  switch (state) {
+    case ALERT_HIGH: // Angry
+      display.drawLine(left_eye_x - 15, 10, left_eye_x + 5, 18, SSD1306_WHITE);
+      display.drawLine(right_eye_x + 15, 10, right_eye_x - 5, 18, SSD1306_WHITE);
+      display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+      display.fillCircle(right_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+      break;
+    case ALERT_LOW: // Sick/Sad
+      display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy + 5, pupil_r - 2, SSD1306_WHITE);
+      display.fillCircle(right_eye_x + pupil_dx, 32 + pupil_dy + 5, pupil_r - 2, SSD1306_WHITE);
+      break;
+    case TOUCHED: // Wink
+      display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+      display.drawFastHLine(right_eye_x - 15, 32, 30, SSD1306_WHITE);
+      break;
+    case HAPPY:
+    default: // Neutral / Happy
+      display.fillCircle(left_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+      display.fillCircle(right_eye_x + pupil_dx, 32 + pupil_dy, pupil_r, SSD1306_WHITE);
+      break;
   }
 
   display.display();
+}
+
+String detectTouchGesture() {
+  // Adapted for INPUT_PULLDOWN where HIGH means touched.
+  int t = digitalRead(TOUCH_PIN);
+
+  // A new touch has started
+  if (t == HIGH && !touchActive) {
+    touchStart = millis();
+    touchActive = true;
+  }
+
+  // The touch has been released
+  if (t == LOW && touchActive) {
+    unsigned long duration = millis() - touchStart;
+    touchActive = false;
+
+    if (duration < 250) {  
+      tapCount++;
+      if (tapCount == 1) {
+        lastTap = millis();
+      }
+      if (tapCount == 2 && (millis() - lastTap < 400)) {
+        tapCount = 0;
+        return "double_tap";
+      }
+    }
+
+    if (duration >= 1500) {
+      return "long_press";
+    }
+  }
+
+  // If a single tap was detected but no second tap followed, fire the single_tap event.
+  if (tapCount == 1 && (millis() - lastTap > 350)) {
+    tapCount = 0;
+    return "single_tap";
+  }
+
+  return ""; // No gesture detected
+}
+
+void beep(int freq, int dur) {
+  if (!buzzerEnabled || isQuietHours()) return;
+  ledcAttachPin(BUZZER_PIN, 0); // Attach pin to channel 0
+  ledcWriteTone(0, freq);
+  delay(dur);
+  ledcWriteTone(0, 0); // Stop tone
+  ledcDetachPin(BUZZER_PIN);
+}
+
+void toneConfirm() {
+  beep(1200, 100);
+  delay(50);
+  beep(1500, 120);
+}
+
+void toneError() {
+  beep(400, 300);
+}
+
+void toneHappy() {
+  beep(1200, 150);
+  beep(1500, 150);
+  beep(1800, 200);
+}
+
+void playFindMyMochi() {
+  // This function now just starts the non-blocking sequence.
+  // The main loop will handle the sound.
+  Serial.println("'Find My Mochi' activated!");
+  findMeIsActive = true;
+  findMeStartTime = millis();
+  drawMochiFace(HAPPY, EYES_UP); // Show surprised eyes
 }
 
 
@@ -1588,15 +1698,14 @@ void setup() {
 
   // Perform an initial sensor read and state check to set the correct state before the first loop.
   readSensors();
-  checkTouchAndEnvironment();
-  updateDisplay(); // Initial display draw
-  drawMochiBigEyes(EYES_CENTER); // Start with the big eyes display
+  // Initial display with a neutral face
+  drawMochiFace(HAPPY, EYES_CENTER);
   Serial.println("Smart-Nav-Mitra is ready!");
   
   lastState = currentState; // Set lastState to the current state so the loop doesn't redraw immediately.
   lastActivityTime = millis(); // Initialize activity timer
-  lastEyeMoveTime = millis(); // Initialize eye animation timer
-  lastParamShowTime = millis(); // Initialize parameter display timer
+  lastEyeMoveTime = millis();
+  lastParamShowTime = millis();
 }
 
 void loop() {
@@ -1606,8 +1715,8 @@ void loop() {
   // In Captive Portal Mode, just handle DNS requests
   if (WiFi.getMode() == WIFI_AP) {
     dnsServer.processNextRequest();
-    // Redraw the face based on the current state (e.g., UPDATING)
-    drawMochiFace(currentState);
+    // Show setup emotion
+    drawMochiFace(SETUP);
     delay(10);
     return; // Don't proceed to other logic
   }
@@ -1619,17 +1728,11 @@ void loop() {
     return;
   }
 
-  // Handle touch state timeout
-  if (currentState == TOUCHED && millis() - touchTimer >= touchDisplayDuration) {
-    currentState = HAPPY; // Revert to a neutral state, environment check will fix it next
-  }
-
   // If there's any touch activity, reset the screen timeout timer
   if (digitalRead(TOUCH_PIN) == HIGH) {
     if (isDisplayOff) {
       isDisplayOff = false; // Wake up screen
-      // Force a redraw on wake-up by invalidating the last state
-      lastState = (MochiState)-1; 
+      drawMochiFace(HAPPY, EYES_UP); // Show eyes looking up on wake up
     }
     lastActivityTime = millis(); // Reset activity timer
   }
@@ -1651,11 +1754,6 @@ void loop() {
     dataHistory[historyIndex].humidity = humidity;
     historyIndex = (historyIndex + 1) % DATA_HISTORY_SIZE;
 
-    
-    // Only check environment if not in a temporary state like TOUCHED or UPDATING
-    if (currentState != TOUCHED && currentState != UPDATING) {
-      checkTouchAndEnvironment();
-    }
   }
 
   // OLED Timeout Logic
@@ -1682,52 +1780,113 @@ void loop() {
     }
   }
 
-  // Update the display based on the current state and timers
-  updateDisplay();
-  
-  delay(10); // Small delay to prevent the loop from running too fast
-}
-
-void updateDisplay() {
-  if (isDisplayOff) {
-    return; // Don't do any display logic if screen is off
-  }
-
-  // --- FINAL, ROBUST DISPLAY STATE MACHINE ---
-
-  // Step 1: Check for high-priority states that override animations.
-  if (currentState == ALERT_HIGH || currentState == ALERT_LOW) {
-    drawMochiFace(currentState);
-    return; // Exit the display logic to ensure the alert is always shown.
-  }
-
-  // Step 2: Handle the periodic switching between "Big Eyes" and "Parameters".
-  if (isShowingParameters) {
-    // We are currently showing the parameter screen.
-    drawMochiFace(currentState); // Keep drawing it.
-
-    // Check if the display duration has passed.
-    if (millis() - paramScreenStartTime > PARAM_DISPLAY_DURATION) {
-      isShowingParameters = false; // Time to switch back.
-      lastParamShowTime = millis(); // Reset the interval timer.
-      drawMochiBigEyes(EYES_CENTER); // Draw the eyes once to switch back immediately.
-    }
-  } else {
-    // We are currently showing the big eyes.
-    // Check if the interval has passed to show parameters.
-    if (millis() - lastParamShowTime > PARAM_SHOW_INTERVAL) {
-      isShowingParameters = true; // Time to switch to parameters.
-      paramScreenStartTime = millis(); // Start the display duration timer.
-      drawMochiFace(currentState); // Draw the parameter screen ONCE to switch immediately.
+  // Handle alarm ringing state (non-blocking sound)
+  if (alarmIsRinging) {
+    // Ring for 15 seconds then stop automatically
+    if (millis() - alarmStartTime > 15000) {
+      stopAlarm();
     } else {
-      // Animate the eyes periodically.
-      if (millis() - lastEyeMoveTime > EYE_MOVE_INTERVAL) {
-        lastEyeMoveTime = millis();
-        currentEyeDirection = (EyeDirection)random(0, 5); // 0 to 4
-        drawMochiBigEyes(currentEyeDirection);
+      // Play a beep every 200ms
+      if (millis() - lastAlarmBeepTime > 200) {
+        lastAlarmBeepTime = millis();
+        beep(1500, 100);
       }
     }
   }
+
+  // Handle "Find My Mochi" non-blocking sound
+  if (findMeIsActive) {
+    // Run for 5 seconds
+    if (millis() - findMeStartTime > 5000) {
+      findMeIsActive = false;
+      currentState = HAPPY; // Revert to a neutral state
+      lastState = (MochiState)-1; // Force redraw of background face
+    } else {
+      if (millis() - lastFindMeBeepTime > 250) { // Beep every 250ms
+        lastFindMeBeepTime = millis();
+        beep(2000, 150);
+      }
+    }
+  }
+
+  // --- NEW GESTURE & STATE LOGIC ---
+
+  // 1. Detect user gesture
+  String gesture = detectTouchGesture();
+
+  if (gesture != "") { // A gesture was detected! This is high priority.
+      lastActivityTime = millis(); // A gesture is activity
+      if (isDisplayOff) {
+          isDisplayOff = false; // Wake up screen
+      }
+
+      if (alarmIsRinging) {
+          // Gestures have special meaning when the alarm is ringing
+          if (gesture == "single_tap") snoozeAlarm();
+          else if (gesture == "long_press") stopAlarm();
+      } else {
+          // Normal gesture handling when alarm is not ringing
+          if (gesture == "single_tap") {
+              drawMochiFace(HAPPY, EYES_UP);
+              beep(1500, 80); // A simple confirmation beep for a tap
+          } else if (gesture == "double_tap") {
+              // On double tap, show the parameter screen
+              isShowingParameters = true;
+              paramScreenStartTime = millis();
+              toneHappy();
+          } else if (gesture == "long_press") {
+              drawMochiFace(TOUCHED); // Show a wink on long press
+              toneConfirm();
+          }
+      }
+      // Use a temporary state to block environment checks for a few seconds
+      currentState = TOUCHED;
+      touchTimer = millis();
+
+  } else { // No gesture detected, handle background states.
+
+      // Check if snooze period is over
+      if (alarmIsSnoozed && millis() > snoozeUntilTime) {
+          startAlarm(); // Re-start the alarm
+      }
+
+      // Revert from temporary gesture state after a delay
+      if (currentState == TOUCHED && millis() - touchTimer > touchDisplayDuration) {
+          currentState = HAPPY; // Revert to a neutral state
+      }
+
+      // --- NEW DISPLAY LOGIC ---
+      if (!isDisplayOff) {
+          checkEnvironment(); // Update background mood
+
+          if (isShowingParameters) {
+              // We are currently showing the parameter screen.
+              drawParameterScreen();
+
+              // Check if the display duration has passed.
+              if (millis() - paramScreenStartTime > PARAM_DISPLAY_DURATION) {
+                  isShowingParameters = false; // Time to switch back.
+                  lastParamShowTime = millis(); // Reset the interval timer.
+              }
+          } else {
+              // We are currently showing the big eyes.
+              // Check if the interval has passed to show parameters.
+              if (millis() - lastParamShowTime > PARAM_SHOW_INTERVAL) {
+                  isShowingParameters = true; // Time to switch to parameters.
+                  paramScreenStartTime = millis(); // Start the display duration timer.
+              } else {
+                  // Animate the eyes periodically.
+                  if (millis() - lastEyeMoveTime > EYE_MOVE_INTERVAL) {
+                      lastEyeMoveTime = millis();
+                      currentEyeDirection = (EyeDirection)random(0, 5); // 0 to 4
+                      drawMochiFace(HAPPY, currentEyeDirection); // Always draw happy big eyes
+                  }
+              }
+          }
+      }
+  }
+  
+  delay(10); // Small delay to prevent the loop from running too fast
 }
 
 #elif DATA_COLLECTION_MODE == 1 // This block runs if DATA_COLLECTION_MODE is 1

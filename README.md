@@ -13,20 +13,44 @@ The current firmware provides a rich set of features right out of the box:
 
 #### **Sensing & Display**
 - **Live Environment Monitoring:** Real-time data for Temperature, Humidity (from AHT20), and Pressure (from BMP280).
-- **Expressive OLED Face:** Mochi's face changes based on its state (Happy, Too Hot, Too Cold, Touched, Updating).
-- **At-a-Glance Data:** The OLED screen displays key sensor readings around the border.
+- **Expressive ASCII-art Face:** The OLED screen displays a wide range of emotions (happy, sad, angry, sleepy, etc.) based on environmental conditions and user interaction.
+- **Alternating Display Modes:** The screen automatically cycles between two views:
+    - **"Big Eyes" Mode:** A full-screen, animated face that looks around and shows expressions.
+    - **"Parameter" Mode:** A split view showing live sensor data on the left and a status face on the right.
+
+#### **User Interaction & Gestures**
+The touch sensor and buzzer provide a rich, physical interaction experience.
+
+##### Touch Sensor Functions
+- **Wake Screen:** Any touch will wake the screen if it's off due to timeout or quiet hours.
+- **Single Tap:**
+    - **During Alarm:** Snoozes the alarm for 7 minutes.
+    - **Normal:** Shows the "Big Eyes" looking up and plays a short confirmation beep.
+- **Double Tap:** Immediately switches the display to the "Parameter Screen" to view sensor data.
+- **Long Press (hold > 1.5s):**
+    - **During Alarm:** Stops the alarm for the day.
+    - **Normal:** Triggers a "wink" animation on the "Big Eyes" display and plays a confirmation melody.
+
+##### Buzzer & Sound Feedback
+- **Gesture Feedback:** Each touch gesture has unique audible feedback.
+- **Melodic Tones:** Plays distinct melodies for different events (confirmation, happiness) instead of simple beeps.
+- **"Find My Mochi":** Plays a loud, repeating sound for 5 seconds when triggered from the web interface.
+- **Smart Muting:** All sounds are automatically disabled if the master "Buzzer" setting is off or if the device is in its scheduled "Quiet Hours."
 
 #### **Web Interface & Control**
 - **Dynamic Live Dashboard:** A modern, mobile-friendly web page showing all sensor and system data.
     - Features a dynamic greeting (Good morning/afternoon/evening).
     - Displays the current date and time in real-time.
 - **Historical Charting:** A live-updating chart plots the history of temperature and humidity.
+- **Find My Mochi:** A button on the dashboard triggers a sound and visual alert to help locate the device.
 - **Web-Based Settings:** A dedicated `/settings` page to configure all device options.
 - **Remote Reboot:** A reboot button on the dashboard for easy troubleshooting.
 
 #### **Customization & Daily Life**
 - **Configurable Alerts:** Set custom temperature thresholds for high and low alerts.
-- **Wake-up Alarm:** Set a daily alarm that will trigger a buzzing sound.
+- **Interactive Wake-up Alarm:** A daily alarm with full gesture control:
+    - **Single-tap** to snooze the alarm for 7 minutes.
+    - **Long-press** to stop the alarm for the day.
 - **Scheduled Quiet Hours:** Automatically disables the buzzer and OLED screen during user-defined hours (e.g., overnight).
 - **Buzzer Control:** A master switch to enable or disable all audible alerts.
 - **OLED Screen Timeout:** The screen automatically turns off after a period of inactivity to save power and prevent burn-in. It wakes up on touch.
@@ -160,7 +184,7 @@ This project is developed in phases to ensure stability.
         -   An adjustable OLED screen timeout to prevent burn-in.
         -   Time zone selection for accurate local time display.
         -   A dynamic, time-based greeting on the web dashboard.
-        -   A live date and time display on the web dashboard.
+    - A major interaction overhaul was completed, implementing a full gesture engine (single/double/long press), a new ASCII-art emotion system, melodic buzzer feedback, and an interactive alarm with snooze/stop functionality.
 
 -   **Phase 3: Advanced Sensing** - 📝 **NEXT UP**
     -   The next planned phase is to integrate new hardware to give Smart-Nav-Mitra new senses. This includes:

@@ -54,3 +54,24 @@ A significant effort was made to resolve hardware instability where the OLED dis
     -   **SCL -> GPIO 5**
 -   **Result:** This change completely resolved the instability. All I2C components now initialize and operate reliably on a single bus. The firmware and `README.md` were updated to reflect this final, correct pin configuration.
 -   **Code Refactoring:** The display logic in the main `loop()` was refactored into a dedicated `updateDisplay()` function. This improves code readability and consolidates all screen drawing logic into a single state machine, making future modifications easier.
+
+## 6. Advanced Interaction Model
+
+This phase involved a complete overhaul of the device's user interaction systems, replacing basic functions with sophisticated, event-driven engines to create a more expressive and interactive experience.
+
+-   **Gesture Engine:** A new `detectTouchGesture()` function was implemented. This state machine analyzes touch duration and timing to reliably distinguish between **single-taps**, **double-taps**, and **long-presses**, forming the foundation for all physical interaction.
+-   **Emotion System:** The old `drawMochiFace` system was replaced with a flexible `drawEmotion()` function that uses ASCII art to display a wide range of emotions like "happy," "sad," "angry," "sleepy," and "excited."
+-   **Melodic Buzzer:** The simple `buzzAlert` was upgraded to a `ledc`-based `beep()` function capable of generating precise musical tones. This enabled the creation of distinct melodies (`toneHappy`, `toneConfirm`, `toneError`) for different events.
+-   **Interactive Alarm:** The wake-up alarm was re-engineered to be fully interactive. It now uses the gesture engine, allowing the user to **single-tap to snooze** or **long-press to stop** the alarm. The feature provides clear visual and audible feedback for each state (ringing, snoozed, stopped).
+-   **"Find My Mochi" Feature:** A "Find Me!" button was added to the web interface. This triggers a non-blocking function that makes the device play a loud, repeating sound and show a "surprised" face for 5 seconds, making it easy to locate.
+-   **State Logic Integration:** All new systems were integrated into the main `loop()`. A state hierarchy was established where user-initiated actions (gestures, alarms) temporarily override the device's background "mood" (which is determined by environmental factors like temperature).
+
+## 7. Display System Refinement
+
+Based on user feedback, the display system was reverted from the ASCII-art style back to the more expressive "Big Eyes" animation, with significant enhancements.
+
+-   **"Big Eyes" as Primary Display:** The `drawEmotion` system was removed, and the `drawMochiFace` function was reinstated as the core display function, focusing on the animated, full-screen eyes.
+-   **Added Expressions:** The `drawMochiFace` function was enhanced to draw expressions on top of the big eyes, such as angry eyebrows for high-temperature alerts, sad/droopy pupils for low-temperature alerts, and a wink for long-press gestures.
+-   **Restored Parameter Screen:** A dedicated `drawParameterScreen` function was created to bring back the split-view layout, showing sensor data on the left and a simple happy/sad status face on the right.
+-   **Alternating Display Logic:** The main `loop()` was updated to automatically cycle between the full-screen "Big Eyes" animation and the "Parameter Screen" on a 10-second timer, restoring the original dynamic display behavior.
+-   **Documentation Update:** The `README.md` file was updated to accurately reflect the final, detailed functionality of all touch gestures and buzzer feedback.
